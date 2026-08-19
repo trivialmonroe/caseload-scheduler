@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; padding: 8px; }
+    label { display: block; margin-top: 10px; font-weight: bold; }
+    input, select, textarea { width: 100%; box-sizing: border-box; padding: 5px; margin-top: 3px; }
+    button { margin-top: 16px; width: 100%; padding: 8px; background: #4285f4; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #3367d6; }
+    #status { margin-top: 10px; font-size: 12px; color: #188038; }
+    #groupIdRow, .weeklyOnly, .quarterlyOnly { display: none; }
+    .hint { font-weight: normal; font-size: 11px; color: #666; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <label>Student ID (unique, e.g., last name + initial)</label>
+  <input id="id" placeholder="e.g., SMITHJ01">
+
+  <label>First Name</label>
+  <input id="firstName">
+
+  <label>Last Name</label>
+  <input id="lastName">
+
+  <label>Grade</label>
+  <input id="grade" placeholder="e.g., 2, K, 5">
+
+  <label>Service Type</label>
+  <select id="serviceType" onchange="toggleGroup()">
+    <option value="Individual">Individual</option>
+    <option value="Group">Group</option>
+  </select>
+
+  <div id="groupIdRow">
+    <label>Group ID (same ID for all group members)</label>
+    <input id="groupId" placeholder="e.g., ARTIC-GROUP-1">
+  </div>
+
+  <label>Frequency Type</label>
+  <select id="frequencyType" onchange="toggleFrequency()">
+    <option value="Weekly">Weekly (e.g. "60 min/week")</option>
+    <option value="Quarterly">Quarterly (e.g. "8 x 30-min sessions per 9-week quarter")</option>
+  </select>
+
+  <div class="weeklyOnly">
+    <label>Minutes / Week Required</label>
+    <input id="minutesPerWeek" type="number" placeholder="e.g., 60">
+
+    <label>Preferred Session Length (minutes) — optional
+      <div class="hint">Leave blank to auto-split toward the configured max</div>
+    </label>
+    <input id="sessionLength" type="number">
+  </div>
+
+  <div class="quarterlyOnly">
+    <label>Sessions Per Quarter (exact count)</label>
+    <input id="sessionsPerQuarter" type="number" placeholder="e.g., 8">
+
+    <label>Session Length (minutes, exact)</label>
+    <input id="quarterlySessionLength" type="number" placeholder="e.g., 30">
+    <div class="hint">These are used exactly as entered and spread evenly across the quarter's weeks (set in the Settings tab, default 9).</div>
+  </div>
+
+  <label>Teacher</label>
+  <input id="teacher" placeholder="e.g., Mrs. Lee - Rm 204">
+
+  <label>Fixed Day / Time (optional - only if this student MUST be seen at an exact time)
+    <div class="hint">Leave both blank for a normal, flexible placement. Fills in only for a hard external constraint.</div>
+  </label>
+  <select id="fixedDay">
+    <option value="">(none - flexible)</option>
+    <option value="Mon">Mon</option>
+    <option value="Tue">Tue</option>
+    <option value="Wed">Wed</option>
+    <option value="Thu">Thu</option>
+    <option value="Fri">Fri</option>
+  </select>
+  <input id="fixedStartTime" placeholder="e.g., 9:00 AM" style="margin-top: 6px;">
+
+  <label>Notes</label>
+  <textarea id="notes" rows="2"></textarea>
+
+  <label>Status</label>
+  <select id="status">
+    <option value="Active">Active</option>
+    <option value="Inactive">Inactive</option>
+  </select>
+
+  <button onclick="submitForm()">Save Student</button>
+  <div id="status"></div>
+
+  <script>
+    function toggleGroup() {
+      document.getElementById('groupIdRow').style.display =
+        document.getElementById('serviceType').value === 'Group' ? 'block' : 'none';
+    }
+
+    function toggleFrequency() {
+      const isQuarterly = document.getElementById('frequencyType').value === 'Quarterly';
+      document.querySelectorAll('.weeklyOnly').forEach(el => el.style.display = isQuarterly ? 'none' : 'block');
+      document.querySelectorAll('.quarterlyOnly').forEach(el => el.style.display = isQuarterly ? 'block' : 'none');
+    }
+    toggleFrequency(); // initialize on load
+
+    function submitForm() {
+      const frequencyType = document.getElementById('frequencyType').value;
+      const isQuarterly = frequencyType === 'Quarterly';
+
+      const data = {
+        id: document.getElementById('id').value.trim(),
+        firstName: document.getElementById('firstName').value.trim(),
+        lastName: document.getElementById('lastName').value.trim(),
+        grade: document.getElementById('grade').value.trim(),
+        serviceType: document.getElementById('serviceType').value,
+        groupId: document.getElementById('groupId').value.trim(),
+        frequencyType: frequencyType,
+        minutesPerWeek: document.getElementById('minutesPerWeek').value,
+        sessionLength: document.getElementById('sessionLength').value,
+        sessionsPerQuarter: document.getElementById('sessionsPerQuarter').value,
+        quarterlySessionLength: document.getElementById('quarterlySessionLength').value,
+        notes: document.getElementById('notes').value.trim(),
+        teacher: document.getElementById('teacher').value.trim(),
+        fixedDay: document.getElementById('fixedDay').value,
+        fixedStartTime: document.getElementById('fixedStartTime').value.trim(),
+        status: document.getElementById('status').value
+      };
+
+      if (!data.id || !data.firstName || !data.lastName || !data.grade) {
+        document.getElementById('status').style.color = '#d93025';
+        document.getElementById('status').innerText = 'Please fill in Student ID, name, and grade.';
+        return;
+      }
+      if (data.serviceType === 'Group' && !data.groupId) {
+        document.getElementById('status').style.color = '#d93025';
+        document.getElementById('status').innerText = 'Group students need a Group ID.';
+        return;
+      }
+      if (!isQuarterly && !data.minutesPerWeek) {
+        document.getElementById('status').style.color = '#d93025';
+        document.getElementById('status').innerText = 'Enter Minutes/Week Required for a Weekly student.';
+        return;
+      }
+      if (isQuarterly && (!data.sessionsPerQuarter || !data.quarterlySessionLength)) {
+        document.getElementById('status').style.color = '#d93025';
+        document.getElementById('status').innerText = 'Enter both Sessions Per Quarter and Session Length for a Quarterly student.';
+        return;
+      }
+
+      google.script.run.withSuccessHandler(function(msg) {
+        document.getElementById('status').style.color = '#188038';
+        document.getElementById('status').innerText = msg;
+      }).submitStudentForm(data);
+    }
+  </script>
+</body>
+</html>
