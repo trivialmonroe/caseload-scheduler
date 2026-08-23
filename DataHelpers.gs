@@ -74,7 +74,7 @@ function getSheetRows(sheetName) {
 
 function loadSettings() {
   const rows = getSheetRows(SHEET_NAMES.SETTINGS);
-  const settings = { slotIncrement: 5, schoolDays: DAYS, minSessionLength: 15, maxSessionLength: 60, weeksPerQuarter: 9, startingWeekPattern: 'A', groupRescueExtraMinutes: 10, maxGroupSize: 6, preferConsistentPattern: true, showTeacherInfo: true };
+  const settings = { slotIncrement: 5, schoolDays: DAYS, minSessionLength: 15, maxSessionLength: 60, weeksPerQuarter: 9, startingWeekPattern: 'A', groupRescueExtraMinutes: 10, maxGroupSize: 6, preferConsistentPattern: true, showTeacherInfo: true, frontLoadFirstSessions: true };
   rows.forEach(r => {
     const key = String(r[0]).trim();
     if (key === 'Slot Increment (min)') settings.slotIncrement = Number(r[1]) || 5;
@@ -97,6 +97,9 @@ function loadSettings() {
     }
     if (key.indexOf('Show Teacher on Schedule Outputs') === 0) {
       settings.showTeacherInfo = String(r[1]).trim().toLowerCase() !== 'no';
+    }
+    if (key.indexOf('Front-Load First Sessions') === 0) {
+      settings.frontLoadFirstSessions = String(r[1]).trim().toLowerCase() !== 'no';
     }
   });
   if (settings.minSessionLength > settings.maxSessionLength) {

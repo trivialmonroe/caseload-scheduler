@@ -241,7 +241,16 @@ function writeOpenSlotsGrid() {
   for (let c = 2; c <= header.length; c++) sheet.setColumnWidth(c, 120);
 }
 
-function writeVisualSchedule() {
+/**
+ * Builds the Printable_Schedule tab. By default (showAllWeeks = false) only
+ * the first 2-week pair is shown - fast, and with "Prefer Consistent Weekly
+ * Pattern" on, later weeks normally look the same anyway. Pass true to
+ * instead render every quarter week, stacked as sequential 2-week blocks
+ * (Week 1+2, Week 3+4, ...) so a part-time provider can see every actual
+ * permutation across the full quarter - this is slower since it's building
+ * roughly 4-5x as much content, so it's opt-in rather than the default.
+ */
+function writeVisualSchedule(showAllWeeks) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAMES.VISUAL);
   if (!sheet) sheet = ss.insertSheet(SHEET_NAMES.VISUAL);
@@ -309,23 +318,27 @@ function writeVisualSchedule() {
 
   const gridRanges = []; // {startRow, numRows} for every week block, resized once at the end
 
-  // Only the FIRST 2-week pair is shown - the point of this view is a clean,
-  // fast reference for the provider's real 2-week rotation, not an exhaustive
-  // week-by-week record (that's what Schedule_Log is for - filter/sort its
-  // Week column for any specific week). With "Prefer Consistent Weekly
-  // Pattern" on, later weeks normally look the same as these two anyway; if a
-  // Quarterly student's cadence genuinely varies week to week, check
-  // Schedule_Log for the full picture.
-  const pairWeeks = weeksToShow.slice(0, 2);
+  // By default only the FIRST 2-week pair is shown - the point of that view is
+  // a clean, fast reference for the provider's real 2-week rotation, not an
+  // exhaustive week-by-week record. With showAllWeeks, every quarter week is
+  // included instead, stacked as sequential 2-week blocks (Week 1+2, Week
+  // 3+4, ...) so every actual A/B permutation across the quarter is visible.
+  const weekPairs = [];
+  if (showAllWeeks && hasSpecificWeeks) {
+    for (let i = 0; i < weeksToShow.length; i += 2) weekPairs.push(weeksToShow.slice(i, i + 2));
+  } else {
+    weekPairs.push(weeksToShow.slice(0, 2));
+  }
 
-  sheet.getRange(currentRow, 1, 1, header.length).merge()
-    .setValue(hasSpecificWeeks
-      ? pairWeeks.map(w => weekLabel(w)).join('  +  ') + '  (representative 2-week view - see Schedule_Log for every week)'
-      : 'Weekly Schedule')
-    .setFontWeight('bold').setFontSize(14);
-  currentRow += 2;
+  weekPairs.forEach(pairWeeks => {
+    sheet.getRange(currentRow, 1, 1, header.length).merge()
+      .setValue(hasSpecificWeeks
+        ? pairWeeks.map(w => weekLabel(w)).join('  +  ') + (showAllWeeks ? '' : '  (representative 2-week view - see Schedule_Log for every week, or Build Printable Schedule (All Weeks))')
+        : 'Weekly Schedule')
+      .setFontWeight('bold').setFontSize(14);
+    currentRow += 2;
 
-  pairWeeks.forEach(week => {
+    pairWeeks.forEach(week => {
       if (hasSpecificWeeks) {
         sheet.getRange(currentRow, 1, 1, header.length).merge()
           .setValue(`${weekLabel(week)}  -  Pattern ${getWeekPattern(week, settings)}`)
@@ -387,6 +400,9 @@ function writeVisualSchedule() {
 
       gridRanges.push({ startRow: gridStartRow, numRows: rowsCount });
       currentRow = gridStartRow + rowsCount + 2;
+    });
+
+    currentRow++; // extra spacer between pair-blocks when there's more than one
   });
 
   sheet.setColumnWidth(1, 64);
@@ -407,12 +423,28 @@ function writeVisualSchedule() {
   }
 }
 
+/**
+ * Clears everything EXCEPT locked rows - locked sessions represent a
+ * decision you've already reviewed and approved, so this should never
+ * silently undo them. To truly wipe everything, run Clear All Locks first,
+ * then this.
+ */
 function clearSchedule() {
   const logSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.LOG);
-  if (logSheet && logSheet.getLastRow() > 1) logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).clearContent();
+  let lockedCount = 0;
+  if (logSheet && logSheet.getLastRow() > 1) {
+    const numRows = logSheet.getLastRow() - 1;
+    const numCols = logSheet.getLastColumn();
+    const data = logSheet.getRange(2, 1, numRows, numCols).getValues();
+    const lockedRows = data.filter(row => String(row[10] || '').trim().toLowerCase() === 'yes');
+    lockedCount = lockedRows.length;
+    logSheet.getRange(2, 1, numRows, numCols).clearContent();
+    if (lockedRows.length) logSheet.getRange(2, 1, lockedRows.length, numCols).setValues(lockedRows);
+  }
   const review = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.REVIEW);
   if (review) review.clear();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Generated schedule cleared.', 'Cleared', 4);
+  const lockMsg = lockedCount ? ` ${lockedCount} locked session(s) were kept.` : '';
+  SpreadsheetApp.getActiveSpreadsheet().toast(`Generated schedule cleared.${lockMsg}`, 'Cleared', 5);
 }
 
 function clearAllLocks() {
@@ -421,4 +453,9 @@ function clearAllLocks() {
     sheet.getRange(2, 11, sheet.getLastRow() - 1, 1).clearContent();
   }
   SpreadsheetApp.getActiveSpreadsheet().toast('All locks cleared - the next Generate Schedule will re-optimize everything.', 'Cleared', 5);
+}
+
+/** Thin wrapper so the menu (which calls functions by name with no arguments) can trigger the all-weeks mode. */
+function writeVisualScheduleAllWeeks() {
+  writeVisualSchedule(true);
 }

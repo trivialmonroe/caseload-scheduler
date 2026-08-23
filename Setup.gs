@@ -29,6 +29,7 @@ function onOpen() {
     .addItem('Generate Schedule', 'generateSchedule')
     .addItem('Show Alternatives for Selected Row', 'showAlternativesForSelection')
     .addItem('Build Printable Schedule (2-Week View)', 'writeVisualSchedule')
+    .addItem('Build Printable Schedule (All Weeks)', 'writeVisualScheduleAllWeeks')
     .addItem('Show Open Slots by Grade (diagnostic)', 'writeOpenSlotsGrid')
     .addSeparator()
     .addItem('Clear Generated Schedule', 'clearSchedule')
@@ -48,7 +49,8 @@ function ensureDefaultSettings(ss) {
     ['Group Rescue Extra Minutes Allowed', 10],
     ['Max Students Per Auto-Group', 6],
     ['Prefer Consistent Weekly Pattern (Yes/No)', 'Yes'],
-    ['Show Teacher on Schedule Outputs (Yes/No)', 'Yes']
+    ['Show Teacher on Schedule Outputs (Yes/No)', 'Yes'],
+    ['Front-Load First Sessions Into Weeks 1-2 (Yes/No)', 'Yes']
   ];
   const existingKeys = sheet.getLastRow() >= 2
     ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]).trim())
@@ -238,7 +240,7 @@ function buildReadMeSheet(ss) {
     ['Settings', 'Slot increment, school days, min/max session length, and how many weeks are in a quarter.'],
     ['Schedule_Log', 'Generated - flat list of every scheduled session. The source of truth - mark a row\'s Locked column "Yes" to keep it exactly as-is on future runs.'],
     ['Schedule_Review', 'Generated - one row per active student: required vs. actually-scheduled minutes (worst-served first), plus a Notes column explaining anything short. Red = under, green = met or over. This is the IEP-compliance check in one place.'],
-    ['Printable_Schedule', 'Generated - clean calendar view for sharing/printing, colored blocks sized to each session\'s actual time, with the time and teacher shown under each name. Quarterly caseloads are shown two quarter-weeks at a time (matching a part-time A/B rotation). Run "Build Printable Schedule" any time to rebuild it from the current Schedule_Log.'],
+    ['Printable_Schedule', 'Generated - clean calendar view for sharing/printing, colored blocks sized to each session\'s actual time, with the time and teacher shown under each name. "Build Printable Schedule (2-Week View)" shows just the first 2 quarter-weeks (fast); "Build Printable Schedule (All Weeks)" shows every quarter-week as sequential 2-week blocks (slower, shows every actual A/B permutation).'],
     ['Open_Slots', 'Generated diagnostic - green/grey/red capacity map per grade & A/B pattern, independent of student bookings. Run "Show Open Slots by Grade" if you need to check whether a grade is fundamentally under-resourced.']
   ];
   tabGuide.forEach(([name, desc]) => {
@@ -263,6 +265,10 @@ function buildReadMeSheet(ss) {
 
   setTitle('Consistent Weekly Pattern', 14);
   setBody('Weekly students already land on the exact same day/time every single week, by construction - there\'s nothing to configure. Quarterly students are different: each of their sessions gets placed independently, so with "Prefer Consistent Weekly Pattern" ON (Settings tab, default Yes), once a Quarterly student\'s first session lands on, say, Tuesday at 9am, later sessions in other weeks will preferentially reuse that same day and time whenever it\'s available - so the provider, teachers, and the student settle into a predictable "always Tuesday" cadence instead of a different day/time every visit. Turn it off if you\'d rather the scheduler optimize purely for fitting everyone in, with no preference for repetition.');
+  blank();
+
+  setTitle('Front-Loading First Sessions', 14);
+  setBody('With "Front-Load First Sessions Into Weeks 1-2" ON (Settings tab, default Yes), every Quarterly student\'s VERY FIRST session gets a strong push into Week 1 or 2 specifically, before the general algorithm even runs. It first tries an individual slot there; if none exists, it leans on grouping - joining an already-scheduled Week 1-2 session using the exact same rules as Automatic Group Rescue below (duration tolerance + group size cap), so raw individual capacity in weeks 1-2 isn\'t the hard ceiling. Combined with Consistent Weekly Pattern above, this means the first two weeks end up showing nearly everyone on the caseload starting their normal recurring pattern - which is exactly what the Printable_Schedule 2-week view is trying to represent. It only ever falls through to a later week if BOTH an individual slot and a compatible group are genuinely unavailable in weeks 1-2 - and even then, only far enough to still get that student scheduled, never leaving anyone out over it. A real manually-created group is never split up or force-joined by someone else, same as everywhere else in this tool.');
   blank();
 
   setTitle('Automatic Group Rescue', 14);
