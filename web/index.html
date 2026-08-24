@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caseload — Scheduler</title>
+  <style>
+    :root {
+      --ink: #1c1917;
+      --muted: #78716c;
+      --line: #e7e5e4;
+      --paper: #faf7f2;
+      --card: #fff;
+      --accent: #0f766e;
+      --accent-2: #c2410c;
+      --ok: #166534;
+      --bad: #b91c1c;
+      --open: #dcfce7;
+      --blocked: #fecaca;
+      --off: #e7e5e4;
+      --shadow: 0 1px 2px rgba(28,25,23,.06), 0 8px 24px rgba(28,25,23,.06);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      grid-template-rows: 56px 1fr;
+      grid-template-areas: "top top" "nav main";
+    }
+    .top {
+      grid-area: top;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { font-weight: 700; letter-spacing: -.02em; font-size: 1.05rem; }
+    .brand span { color: var(--accent); }
+    .top .grow { flex: 1; }
+    .status {
+      font-size: 13px; color: var(--muted); max-width: 42%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .status.ok { color: var(--ok); }
+    .status.bad { color: var(--bad); }
+    button, .btn {
+      font: inherit; cursor: pointer; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--card); padding: 7px 12px;
+    }
+    button:hover, .btn:hover { background: #f5f5f4; }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    button.primary:hover { background: #44403c; }
+    button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+    aside {
+      grid-area: nav;
+      background: #fff;
+      border-right: 1px solid var(--line);
+      padding: 12px 8px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    aside .sec { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 10px 10px 4px; }
+    aside button.nav {
+      width: 100%; text-align: left; border: none; background: transparent;
+      padding: 8px 10px; border-radius: 8px; color: var(--ink);
+    }
+    aside button.nav.active { background: #ecfdf8; color: var(--accent); font-weight: 600; }
+    main { grid-area: main; overflow: auto; padding: 20px 24px 48px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; letter-spacing: -.02em; }
+    .lede { color: var(--muted); margin: 0 0 18px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; box-shadow: var(--shadow);
+    }
+    .card h3 { margin: 0 0 4px; font-size: 1rem; }
+    .meta { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #f5f5f4; margin-right: 4px; }
+    .pill.teal { background: #ccfbf1; color: #115e59; }
+    .pill.warn { background: #ffedd5; color: #9a3412; }
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .stat b { display: block; font-size: 1.4rem; letter-spacing: -.03em; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); background: #fafaf9; }
+    tr.under td { background: #fef2f2; }
+    tr.met td { background: #f0fdf4; }
+    tr.auto td { background: #f5f3ff; }
+    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip {
+      border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; font-size: 12px; background: #fff; cursor: pointer;
+    }
+    .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+    input, select, textarea {
+      font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; background: #fff;
+    }
+    label { font-size: 12px; font-weight: 600; display: block; margin: 8px 0 4px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    .modal-bg {
+      position: fixed; inset: 0; background: rgba(28,25,23,.4); display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal { background: #fff; border-radius: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; padding: 20px; box-shadow: var(--shadow); }
+    .cal { overflow-x: auto; }
+    .cal-grid { display: grid; grid-template-columns: 64px repeat(5, 1fr); min-width: 720px; border: 1px solid var(--line); background: #fff; }
+    .cal-grid > div { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-height: 28px; font-size: 11px; padding: 2px; }
+    .cal-head { background: var(--ink); color: #fff; text-align: center; padding: 8px !important; font-weight: 600; }
+    .sess {
+      border-radius: 6px; padding: 4px 6px; color: #fff; font-size: 11px; line-height: 1.25; height: 100%;
+    }
+    .heat td.open { background: var(--open); }
+    .heat td.blocked { background: var(--blocked); font-size: 10px; }
+    .heat td.off { background: var(--off); }
+    .drop {
+      border: 1.5px dashed var(--line); border-radius: 12px; padding: 16px; text-align: center; color: var(--muted); margin-bottom: 12px;
+      background: #fff;
+    }
+    .drop.hot { border-color: var(--accent); background: #f0fdfa; }
+    .hidden { display: none !important; }
+    @media print {
+      aside, .top, .no-print { display: none !important; }
+      body { display: block; background: #fff; }
+      main { padding: 0; }
+    }
+    @media (max-width: 800px) {
+      body { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
+      aside { display: none; }
+      .stat-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">Caseload <span>Scheduler</span></div>
+    <div class="grow"></div>
+    <div class="status" id="status">Ready</div>
+    <button type="button" onclick="validateNow()">Check</button>
+    <button type="button" class="primary" onclick="generateNow()">Generate schedule</button>
+  </div>
+  <aside>
+    <div class="sec">Schedule</div>
+    <button type="button" class="nav active" data-view="home" onclick="showView('home')">Week view</button>
+    <button class="nav" data-view="review" onclick="showView('review')">Coverage</button>
+    <button class="nav" data-view="sessions" onclick="showView('sessions')">Sessions</button>
+    <button class="nav" data-view="open" onclick="showView('open')">Open slots</button>
+    <div class="sec">Caseload</div>
+    <button class="nav" data-view="students" onclick="showView('students')">Students</button>
+    <button class="nav" data-view="hours" onclick="showView('hours')">My hours</button>
+    <button class="nav" data-view="grades" onclick="showView('grades')">Grade blocks</button>
+    <button class="nav" data-view="blocks" onclick="showView('blocks')">Student blocks</button>
+    <div class="sec">File</div>
+    <button class="nav" data-view="files" onclick="showView('files')">Import / export</button>
+    <button class="nav" data-view="settings" onclick="showView('settings')">Settings</button>
+  </aside>
+  <main id="main"></main>
+  <input id="filePick" type="file" class="hidden" accept=".json,.csv,text/csv,application/json">
+
+<script src="engine.js"></script>
+<script>
+'use strict';
+
+const STORE = 'caseload.workspace.v2';
+let view = 'home';
+let showAllWeeks = false;
+let altFor = null;
+
+function blankWorkspace() {
+  return {
+    version: 2,
+    settings: Object.assign({}, DEFAULT_SETTINGS),
+    students: [],
+    availability: [],
+    grades: [],
+    constraints: [],
+    scheduleLog: [],
+    lastRun: null,
+  };
+}
+
+function sampleWorkspace() {
+  const w = blankWorkspace();
+  w.availability = [
+    { day: 'Mon-Fri', start: '8:00 AM', end: '11:00 AM', pattern: '', notes: '' },
+    { day: 'Mon, Wed', start: '12:30 PM', end: '3:00 PM', pattern: '', notes: '' },
+    { day: 'Tue, Thu, Fri', start: '12:30 PM', end: '2:30 PM', pattern: '', notes: '' },
+  ];
+  w.grades = [
+    { grade: '2', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' },
+    { grade: '2', day: 'Tue', start: '1:00 PM', end: '1:45 PM', reason: 'Specials' },
+    { grade: 'K', day: 'Mon, Wed', start: '9:00 AM', end: '9:30 AM', reason: 'Recess' },
+    { grade: '3', day: 'Mon-Fri', start: '11:00 AM', end: '11:45 AM', reason: 'Lunch' },
+  ];
+  w.constraints = [
+    { studentId: 'SMITHJ01', day: 'Tue', start: '10:00 AM', end: '10:30 AM', reason: 'OT' },
+    { studentId: 'JONESM02', day: 'Mon-Fri', start: '8:00 AM', end: '8:30 AM', reason: 'Resource room' },
+  ];
+  w.students = [
+    { id: 'SMITHJ01', firstName: 'John', lastName: 'Smith', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mrs. Lee — Rm 204', fixedDay: '', fixedStart: '' },
+    { id: 'JONESM02', firstName: 'Mary', lastName: 'Jones', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 90, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Kim — Rm 210', fixedDay: '', fixedStart: '' },
+    { id: 'DOEA03', firstName: 'Alex', lastName: 'Doe', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Quarterly', minutesPerWeek: '', preferredSessionLength: '', sessionsPerQuarter: 8, quarterlySessionLength: 30, notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
+    { id: 'LEEB04', firstName: 'Bri', lastName: 'Lee', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 30, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
+    { id: 'PARKC05', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+    { id: 'RIOSD06', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+  ];
+  return w;
+}
+
+let state = blankWorkspace();
+
+function persist() {
+  try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+}
+function hydrate() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (raw) state = Object.assign(blankWorkspace(), JSON.parse(raw));
+  } catch (e) {}
+  if (!state.students.length && !state.availability.length) state = sampleWorkspace();
+}
+
+function setStatus(msg, kind) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
+function showView(id) {
+  view = id;
+  altFor = null;
+  document.querySelectorAll('aside button.nav').forEach(b => b.classList.toggle('active', b.dataset.view === id));
+  render();
+}
+
+function engineInput() {
+  return {
+    settings: state.settings,
+    students: state.students,
+    availability: state.availability,
+    grades: state.grades,
+    constraints: state.constraints,
+    scheduleLog: state.scheduleLog,
+  };
+}
+
+function generateNow() {
+  const issues = validateCaseload(state);
+  if (issues.length) { setStatus(issues[0], 'bad'); }
+  const result = runSchedulingEngine(engineInput());
+  if (result.error) { setStatus(result.error, 'bad'); return; }
+  state.scheduleLog = result.logRows;
+  state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
+  persist();
+  setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
+  showView('home');
+}
+
+function validateNow() {
+  const issues = validateCaseload(state);
+  if (!issues.length) setStatus('Looks ready to generate.', 'ok');
+  else setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
+  render();
+}
+
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 500);
+}
+
+function exportWorkspace() {
+  downloadText('caseload-workspace.json', JSON.stringify(state, null, 2), 'application/json');
+  setStatus('Saved workspace JSON.', 'ok');
+}
+
+function exportCsv(kind) {
+  const map = {
+    students: state.students,
+    availability: state.availability,
+    grades: state.grades,
+    constraints: state.constraints,
+    schedule: state.scheduleLog,
+  };
+  downloadText(kind + '.csv', objectsToCsv(map[kind] || [], CSV_SCHEMAS[kind]), 'text/csv');
+  setStatus('Exported ' + kind + '.csv', 'ok');
+}
+
+function importText(name, text) {
+  if (/\.json$/i.test(name) || text.trim().startsWith('{')) {
+    const data = JSON.parse(text);
+    state = Object.assign(blankWorkspace(), data);
+    persist();
+    setStatus('Opened workspace.', 'ok');
+    render();
+    return;
+  }
+  const rows = csvToObjects(text);
+  const headers = rows[0] ? Object.keys(rows[0]) : [];
+  const kind = detectCsvKind(headers);
+  if (kind === 'students') state.students = rows.map(normalizeImportedStudent);
+  else if (kind === 'availability') state.availability = rows.map(r => ({ day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, pattern: r.pattern || r.Pattern || '', notes: r.notes || r.Notes || '' }));
+  else if (kind === 'grades') state.grades = rows.map(r => ({ grade: r.grade || r.Grade, day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
+  else if (kind === 'constraints') state.constraints = rows.map(r => ({ studentId: r.studentId || r['Student ID'], day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
+  else if (kind === 'schedule') state.scheduleLog = rows;
+  else { setStatus('Could not detect CSV type from headers.', 'bad'); return; }
+  persist();
+  setStatus('Imported ' + kind + ' (' + rows.length + ' rows).', 'ok');
+  render();
+}
+
+function pickFile() { document.getElementById('filePick').click(); }
+document.getElementById('filePick').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => importText(f.name, reader.result);
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+function reviewRows() {
+  if (state.lastRun && state.lastRun.review) return state.lastRun.review;
+  return [];
+}
+
+function renderHome() {
+  const log = state.scheduleLog || [];
+  const rev = reviewRows();
+  const met = rev.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  if (!log.length) {
+    return `<h1>This week, at a glance</h1>
+      <p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
+      <div class="row no-print">
+        <button class="primary" onclick="state=sampleWorkspace();persist();generateNow()">Load sample & generate</button>
+        <button onclick="pickFile()">Open JSON / CSV</button>
+      </div>`;
+  }
+  const cal = buildCalendarModel(log, state.settings, showAllWeeks);
+  let html = `<h1>Week view</h1>
+    <p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered</p>
+    <div class="stat-grid no-print">
+      <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
+      <div class="stat"><b>${met}</b><span>Students meeting minutes</span></div>
+      <div class="stat"><b>${(state.lastRun && state.lastRun.unplaced) || 0}</b><span>Unplaced</span></div>
+      <div class="stat"><b>${(state.lastRun && state.lastRun.rescued) || 0}</b><span>Auto-grouped</span></div>
+    </div>
+    <div class="row no-print">
+      <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
+      <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
+      <button onclick="window.print()">Print</button>
+      <button onclick="exportCsv('schedule')">Export schedule CSV</button>
+    </div>
+    <div class="row">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+  cal.weekPairs.forEach(pair => {
+    pair.forEach(week => {
+      const label = cal.hasSpecificWeeks ? ('Week ' + week) : 'Weekly';
+      html += `<div class="card cal"><h3>${esc(label)}</h3>${renderWeekGrid(cal, week)}</div>`;
+    });
+  });
+  return html;
+}
+
+function renderWeekGrid(cal, week) {
+  const weekLabel = cal.hasSpecificWeeks ? ('Week ' + week) : 'Every Week';
+  const inc = cal.inc, start = cal.minStart, rows = cal.rowsCount;
+  const cells = {};
+  DAYS.forEach(d => { cells[d] = Array.from({ length: rows }, () => null); });
+  cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
+    const r0 = Math.max(0, Math.round((e.start - start) / inc));
+    const r1 = Math.min(rows, Math.max(r0 + 1, Math.round((e.end - start) / inc)));
+    const color = cal.gradeColors[e.grade] || { bg: '#444', text: '#fff' };
+    const text = e.names.join(' + ') + '\n' + minutesToTimeStr(e.start) + '–' + minutesToTimeStr(e.end);
+    if (cells[e.day]) cells[e.day][r0] = { span: Math.max(1, r1 - r0), text, color };
+    for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
+  });
+  let html = '<div class="cal-grid">';
+  html += '<div class="cal-head">Time</div>' + DAYS.map(d => '<div class="cal-head">' + d + '</div>').join('');
+  for (let r = 0; r < rows; r++) {
+    html += '<div>' + esc(minutesToTimeStr(start + r * inc)) + '</div>';
+    DAYS.forEach(d => {
+      const c = cells[d][r];
+      if (c === 'skip') return;
+      if (!c) { html += '<div></div>'; return; }
+      html += `<div style="grid-row: span ${c.span}"><div class="sess" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
+    });
+  }
+  return html + '</div>';
+}
+
+function renderReview() {
+  const rows = reviewRows();
+  if (!rows.length) return '<h1>Coverage</h1><p class="lede">Generate a schedule to see required vs placed minutes.</p>';
+  const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  let html = `<h1>Coverage</h1><p class="lede">${met} of ${rows.length} students meeting required minutes</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th></tr></thead><tbody>`;
+  rows.forEach(r => {
+    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td></tr>`;
+  });
+  return html + '</tbody></table>';
+}
+
+function toggleLock(i) {
+  const row = state.scheduleLog[i];
+  if (!row) return;
+  const on = String(row.locked).toLowerCase() === 'yes';
+  row.locked = on ? '' : 'Yes';
+  persist();
+  render();
+}
+
+function clearScheduleKeepLocks() {
+  state.scheduleLog = (state.scheduleLog || []).filter(r => String(r.locked).toLowerCase() === 'yes');
+  persist(); setStatus('Cleared unlocked sessions.', 'ok'); render();
+}
+function clearLocks() {
+  (state.scheduleLog || []).forEach(r => { r.locked = ''; });
+  persist(); setStatus('Locks cleared.', 'ok'); render();
+}
+
+function renderSessions() {
+  const rows = state.scheduleLog || [];
+  let html = `<h1>Sessions</h1>
+    <p class="lede">Lock a row to keep it on the next generate. Find other times without reshuffling everyone.</p>
+    <div class="row no-print">
+      <button onclick="clearScheduleKeepLocks()">Clear unlocked</button>
+      <button onclick="clearLocks()">Clear all locks</button>
+      <button onclick="exportCsv('schedule')">CSV</button>
+    </div>`;
+  if (!rows.length) return html + '<p class="lede">No sessions yet.</p>';
+  html += '<table><thead><tr><th></th><th>Student</th><th>When</th><th>Group</th><th>Teacher</th><th></th></tr></thead><tbody>';
+  rows.forEach((r, i) => {
+    const auto = String(r.groupId).indexOf('AUTO-GROUP-') === 0;
+    const locked = String(r.locked).toLowerCase() === 'yes';
+    html += `<tr class="${auto ? 'auto' : ''}">
+      <td><button onclick="toggleLock(${i})">${locked ? 'Locked' : 'Lock'}</button></td>
+      <td>${esc(r.name)}<div class="meta">${esc(r.studentId)} · Gr ${esc(r.grade)}</div></td>
+      <td>${esc(r.week)} ${esc(r.day)} ${esc(r.start)}–${esc(r.end)} <span class="meta">${esc(r.duration)} min</span></td>
+      <td>${esc(r.groupId)}</td><td>${esc(r.teacher)}</td>
+      <td><button class="ghost" onclick="openAlts(${i})">Other times</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  if (altFor != null) html += renderAlts();
+  return html;
+}
+
+function openAlts(i) { altFor = i; render(); }
+
+function renderAlts() {
+  const row = state.scheduleLog[altFor];
+  const found = findAlternativeSlots(engineInput(), row);
+  if (found.error) return `<div class="card">${esc(found.error)}</div>`;
+  let html = `<div class="card"><h3>Other times for ${esc(row.name)}</h3><p class="meta">Up to 24 slots that fit current locks and blackouts. Click to move this session (group members move together if they share a group id).</p><div class="chip-row">`;
+  found.candidates.forEach((c, n) => {
+    html += `<button class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
+  });
+  if (!found.candidates.length) html += '<span class="meta">None available.</span>';
+  return html + '</div><button class="ghost" onclick="altFor=null;render()">Close</button></div>';
+}
+
+function applyAlt(n) {
+  const row = state.scheduleLog[altFor];
+  const found = findAlternativeSlots(engineInput(), row);
+  const c = found.candidates[n];
+  if (!c) return;
+  const dur = timeStrToMinutes(row.end) - timeStrToMinutes(row.start);
+  const gid = row.groupId;
+  state.scheduleLog.forEach(r => {
+    const same = r === row || (gid && r.groupId === gid && r.week === row.week && r.day === row.day && r.start === row.start);
+    if (!same) return;
+    r.day = c.day;
+    r.start = minutesToTimeStr(c.start);
+    r.end = minutesToTimeStr(c.start + dur);
+    if (c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL') r.week = 'Week ' + c.week;
+  });
+  persist();
+  setStatus('Moved session.', 'ok');
+  altFor = null;
+  render();
+}
+
+function renderOpen() {
+  const data = computeOpenSlots(engineInput());
+  if (data.error) return `<h1>Open slots</h1><p class="lede">${esc(data.error)}</p>`;
+  let html = `<h1>Open slots</h1><p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
+  data.blocks.forEach(b => {
+    html += `<div class="card"><h3>Grade ${esc(b.grade)}${data.hasAlternating ? ' · pattern ' + b.pattern : ''} <span class="meta">${b.openMinutes} open min / week</span></h3>
+      <table class="heat"><thead><tr><th>Time</th>${DAYS.map(d => '<th>'+d+'</th>').join('')}</tr></thead><tbody>`;
+    b.cells.forEach(row => {
+      html += `<tr><td>${esc(row.timeLabel)}</td>` + DAYS.map(d => {
+        const cell = row.days[d];
+        return `<td class="${cell.kind}">${esc(cell.label)}</td>`;
+      }).join('') + '</tr>';
+    });
+    html += '</tbody></table></div>';
+  });
+  return html;
+}
+
+function studentNeed(s) {
+  if ((s.frequencyType || 'Weekly') === 'Quarterly') return (s.sessionsPerQuarter || '?') + ' × ' + (s.quarterlySessionLength || '?') + ' min / qtr';
+  return (s.minutesPerWeek || 0) + ' min / week';
+}
+
+function renderStudents() {
+  const q = (document.getElementById('q') && document.getElementById('q').value || '').toLowerCase();
+  const list = state.students.filter(s => !q || JSON.stringify(s).toLowerCase().includes(q));
+  let html = `<h1>Students</h1>
+    <p class="lede">One card per student. Groups share a Group ID. Add from the form — or paste a CSV on the Files page.</p>
+    <div class="row">
+      <input id="q" placeholder="Search" style="max-width:240px" oninput="render()" value="${esc(q)}">
+      <button class="primary" onclick="openStudentForm()">Add student</button>
+      <button onclick="exportCsv('students')">CSV</button>
+    </div>
+    <div class="cards">`;
+  list.forEach((s, i) => {
+    const idx = state.students.indexOf(s);
+    html += `<div class="card">
+      <h3>${esc(s.firstName)} ${esc(s.lastName)} <span class="pill">${esc(s.status || 'Active')}</span></h3>
+      <div class="meta">${esc(s.id)} · Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''}<br>${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+      <div class="row" style="margin:10px 0 0">
+        <button onclick="openStudentForm(${idx})">Edit</button>
+        <button class="ghost" onclick="state.students.splice(${idx},1);persist();render()">Remove</button>
+      </div>
+    </div>`;
+  });
+  return html + '</div>';
+}
+
+function openStudentForm(idx) {
+  const s = idx == null ? { id: '', firstName: '', lastName: '', grade: '', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' } : Object.assign({}, state.students[idx]);
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-bg';
+  wrap.innerHTML = `<div class="modal">
+    <h2 style="margin-top:0">${idx == null ? 'Add student' : 'Edit student'}</h2>
+    <div class="form-grid">
+      <div><label>ID</label><input id="f-id" value="${esc(s.id)}"></div>
+      <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
+      <div><label>First name</label><input id="f-first" value="${esc(s.firstName)}"></div>
+      <div><label>Last name</label><input id="f-last" value="${esc(s.lastName)}"></div>
+      <div><label>Grade</label><input id="f-grade" value="${esc(s.grade)}"></div>
+      <div><label>Teacher</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
+      <div><label>Service</label><select id="f-service"><option>Individual</option><option>Group</option></select></div>
+      <div><label>Group ID</label><input id="f-gid" value="${esc(s.groupId)}"></div>
+      <div><label>Frequency</label><select id="f-freq"><option>Weekly</option><option>Quarterly</option></select></div>
+      <div><label>Minutes / week</label><input id="f-min" type="number" value="${esc(s.minutesPerWeek)}"></div>
+      <div><label>Preferred length</label><input id="f-pref" type="number" value="${esc(s.preferredSessionLength)}"></div>
+      <div><label>Sessions / quarter</label><input id="f-sq" type="number" value="${esc(s.sessionsPerQuarter)}"></div>
+      <div><label>Quarterly length</label><input id="f-ql" type="number" value="${esc(s.quarterlySessionLength)}"></div>
+      <div><label>Fixed day</label><select id="f-fd"><option value=""></option>${DAYS.map(d=>'<option>'+d+'</option>').join('')}</select></div>
+      <div><label>Fixed start</label><input id="f-fs" placeholder="9:00 AM" value="${esc(s.fixedStart)}"></div>
+    </div>
+    <label>Notes</label><textarea id="f-notes" rows="2">${esc(s.notes)}</textarea>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="f-save">Save</button>
+      <button id="f-cancel">Cancel</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#f-status').value = s.status || 'Active';
+  wrap.querySelector('#f-service').value = s.serviceType || 'Individual';
+  wrap.querySelector('#f-freq').value = s.frequencyType || 'Weekly';
+  wrap.querySelector('#f-fd').value = s.fixedDay || '';
+  wrap.querySelector('#f-cancel').onclick = () => wrap.remove();
+  wrap.querySelector('#f-save').onclick = () => {
+    const next = {
+      id: wrap.querySelector('#f-id').value.trim(),
+      firstName: wrap.querySelector('#f-first').value.trim(),
+      lastName: wrap.querySelector('#f-last').value.trim(),
+      grade: wrap.querySelector('#f-grade').value.trim(),
+      teacher: wrap.querySelector('#f-teacher').value.trim(),
+      serviceType: wrap.querySelector('#f-service').value,
+      groupId: wrap.querySelector('#f-gid').value.trim(),
+      frequencyType: wrap.querySelector('#f-freq').value,
+      minutesPerWeek: wrap.querySelector('#f-min').value,
+      preferredSessionLength: wrap.querySelector('#f-pref').value,
+      sessionsPerQuarter: wrap.querySelector('#f-sq').value,
+      quarterlySessionLength: wrap.querySelector('#f-ql').value,
+      status: wrap.querySelector('#f-status').value,
+      notes: wrap.querySelector('#f-notes').value,
+      fixedDay: wrap.querySelector('#f-fd').value,
+      fixedStart: wrap.querySelector('#f-fs').value.trim(),
+    };
+    if (!next.id || !next.firstName) { alert('ID and first name are required.'); return; }
+    if (idx == null) state.students.push(next);
+    else state.students[idx] = next;
+    persist(); wrap.remove(); render();
+  };
+}
+
+function dayChips(selected, inputId) {
+  const set = new Set(parseDayList(selected || ''));
+  return DAYS.map(d => `<button type="button" class="chip ${set.has(d) ? 'on' : ''}" data-day="${d}" onclick="toggleDay(this,'${inputId}')">${d}</button>`).join('') +
+    `<input type="hidden" id="${inputId}" value="${esc(selected || '')}">`;
+}
+function toggleDay(btn, inputId) {
+  btn.classList.toggle('on');
+  const days = Array.from(btn.parentElement.querySelectorAll('.chip.on')).map(b => b.dataset.day);
+  document.getElementById(inputId).value = days.join(', ');
+}
+
+function addWindow(kind) {
+  if (kind === 'availability') state.availability.push({ day: 'Mon-Fri', start: '8:00 AM', end: '3:00 PM', pattern: '', notes: '' });
+  if (kind === 'grades') state.grades.push({ grade: '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
+  if (kind === 'constraints') state.constraints.push({ studentId: '', day: 'Mon', start: '', end: '', reason: '' });
+  persist(); render();
+}
+
+function renderHours() {
+  let html = `<h1>My hours</h1><p class="lede">When you can see students. Leave pattern blank for every week; A/B for alternating.</p>
+    <div class="row"><button class="primary" onclick="addWindow('availability')">Add window</button><button onclick="exportCsv('availability')">CSV</button></div>`;
+  state.availability.forEach((w, i) => {
+    html += `<div class="card"><div class="form-grid">
+      <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'av-d-'+i)}</div></div>
+      <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persist()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
+      <div><label>Start</label><input value="${esc(w.start)}" onchange="state.availability[${i}].start=this.value;persist()"></div>
+      <div><label>End</label><input value="${esc(w.end)}" onchange="state.availability[${i}].end=this.value;persist()"></div>
+    </div>
+    <label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persist()">
+    <button class="ghost" onclick="commitDays('availability',${i},'av-d-${i}');state.availability.splice(${i},1);persist();render()">Remove</button>
+    <button class="ghost" onclick="commitDays('availability',${i},'av-d-${i}')">Save days</button>
+    </div>`;
+  });
+  return html;
+}
+
+function commitDays(kind, i, id) {
+  const v = document.getElementById(id).value;
+  if (kind === 'availability') state.availability[i].day = v;
+  if (kind === 'grades') state.grades[i].day = v;
+  if (kind === 'constraints') state.constraints[i].day = v;
+  persist();
+}
+
+function renderGrades() {
+  let html = `<h1>Grade blocks</h1><p class="lede">Lunch, recess, specials — inherited by every student in that grade.</p>
+    <div class="row"><button class="primary" onclick="addWindow('grades')">Add block</button><button onclick="exportCsv('grades')">CSV</button></div>`;
+  state.grades.forEach((g, i) => {
+    html += `<div class="card"><div class="form-grid">
+      <div><label>Grade</label><input value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persist()"></div>
+      <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persist()"></div>
+      <div><label>Start</label><input value="${esc(g.start)}" onchange="state.grades[${i}].start=this.value;persist()"></div>
+      <div><label>End</label><input value="${esc(g.end)}" onchange="state.grades[${i}].end=this.value;persist()"></div>
+    </div><label>Days</label><div class="chip-row">${dayChips(g.day, 'gr-d-'+i)}</div>
+    <button class="ghost" onclick="commitDays('grades',${i},'gr-d-${i}');state.grades.splice(${i},1);persist();render()">Remove</button>
+    <button class="ghost" onclick="commitDays('grades',${i},'gr-d-${i}')">Save days</button></div>`;
+  });
+  return html;
+}
+
+function renderBlocks() {
+  let html = `<h1>Student blocks</h1><p class="lede">OT, resource room, anything that applies to one student beyond their grade.</p>
+    <div class="row"><button class="primary" onclick="addWindow('constraints')">Add block</button><button onclick="exportCsv('constraints')">CSV</button></div>`;
+  state.constraints.forEach((c, i) => {
+    html += `<div class="card"><div class="form-grid">
+      <div><label>Student ID</label><input value="${esc(c.studentId)}" onchange="state.constraints[${i}].studentId=this.value;persist()"></div>
+      <div><label>Reason</label><input value="${esc(c.reason)}" onchange="state.constraints[${i}].reason=this.value;persist()"></div>
+      <div><label>Start</label><input value="${esc(c.start)}" onchange="state.constraints[${i}].start=this.value;persist()"></div>
+      <div><label>End</label><input value="${esc(c.end)}" onchange="state.constraints[${i}].end=this.value;persist()"></div>
+    </div><label>Days</label><div class="chip-row">${dayChips(c.day, 'c-d-'+i)}</div>
+    <button class="ghost" onclick="commitDays('constraints',${i},'c-d-${i}');state.constraints.splice(${i},1);persist();render()">Remove</button>
+    <button class="ghost" onclick="commitDays('constraints',${i},'c-d-${i}')">Save days</button></div>`;
+  });
+  return html;
+}
+
+function renderFiles() {
+  return `<h1>Import / export</h1>
+    <p class="lede">The live workspace auto-saves in this browser. JSON is the full file (settings + caseload + schedule). CSV is one table at a time.</p>
+    <div class="drop" id="drop">Drop a .json or .csv here, or <button onclick="pickFile()">choose a file</button></div>
+    <div class="row">
+      <button class="primary" onclick="exportWorkspace()">Download workspace.json</button>
+      <button onclick="exportCsv('students')">students.csv</button>
+      <button onclick="exportCsv('availability')">hours.csv</button>
+      <button onclick="exportCsv('grades')">grades.csv</button>
+      <button onclick="exportCsv('constraints')">blocks.csv</button>
+      <button onclick="exportCsv('schedule')">schedule.csv</button>
+    </div>
+    <div class="row">
+      <button onclick="state=sampleWorkspace();persist();render();setStatus('Sample caseload loaded.','ok')">Reset to sample</button>
+      <button onclick="state=blankWorkspace();persist();render();setStatus('Cleared.','ok')">Start empty</button>
+    </div>
+    <div class="card"><h3>CSV headers</h3>
+      <p class="meta"><b>students:</b> ${CSV_SCHEMAS.students.join(', ')}</p>
+      <p class="meta"><b>availability:</b> ${CSV_SCHEMAS.availability.join(', ')}</p>
+      <p class="meta"><b>grades:</b> ${CSV_SCHEMAS.grades.join(', ')}</p>
+      <p class="meta"><b>constraints:</b> ${CSV_SCHEMAS.constraints.join(', ')}</p>
+      <p class="meta"><b>schedule:</b> ${CSV_SCHEMAS.schedule.join(', ')}</p>
+    </div>`;
+}
+
+function renderSettings() {
+  const s = state.settings;
+  const num = (key, label) => `<div><label>${label}</label><input type="number" value="${esc(s[key])}" onchange="state.settings.${key}=Number(this.value)||this.value;persist()"></div>`;
+  return `<h1>Settings</h1>
+    <p class="lede">Same knobs as the Sheets build. Changes apply on the next generate.</p>
+    <div class="card form-grid">
+      ${num('slotIncrement','Slot increment (min)')}
+      ${num('minSessionLength','Min session (min)')}
+      ${num('maxSessionLength','Max session (min)')}
+      ${num('weeksPerQuarter','Weeks per quarter')}
+      ${num('groupRescueExtraMinutes','Group rescue extra minutes')}
+      ${num('maxGroupSize','Max auto-group size')}
+      <div><label>Starting week pattern</label><select onchange="state.settings.startingWeekPattern=this.value;persist()"><option ${s.startingWeekPattern==='A'?'selected':''}>A</option><option ${s.startingWeekPattern==='B'?'selected':''}>B</option></select></div>
+      <div><label>Prefer consistent weekly pattern</label><select onchange="state.settings.preferConsistentPattern=this.value==='true';persist()"><option value="true" ${s.preferConsistentPattern?'selected':''}>Yes</option><option value="false" ${!s.preferConsistentPattern?'selected':''}>No</option></select></div>
+      <div><label>Front-load first sessions (weeks 1–2)</label><select onchange="state.settings.frontLoadFirstSessions=this.value==='true';persist()"><option value="true" ${s.frontLoadFirstSessions?'selected':''}>Yes</option><option value="false" ${!s.frontLoadFirstSessions?'selected':''}>No</option></select></div>
+      <div><label>Show teacher on outputs</label><select onchange="state.settings.showTeacherInfo=this.value==='true';persist()"><option value="true" ${s.showTeacherInfo?'selected':''}>Yes</option><option value="false" ${!s.showTeacherInfo?'selected':''}>No</option></select></div>
+    </div>`;
+}
+
+function render() {
+  const main = document.getElementById('main');
+  const map = { home: renderHome, review: renderReview, sessions: renderSessions, open: renderOpen, students: renderStudents, hours: renderHours, grades: renderGrades, blocks: renderBlocks, files: renderFiles, settings: renderSettings };
+  main.innerHTML = (map[view] || renderHome)();
+  const drop = document.getElementById('drop');
+  if (drop) {
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('hot'); };
+    drop.ondragleave = () => drop.classList.remove('hot');
+    drop.ondrop = (e) => {
+      e.preventDefault(); drop.classList.remove('hot');
+      const f = e.dataTransfer.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => importText(f.name, reader.result);
+      reader.readAsText(f);
+    };
+  }
+}
+
+hydrate();
+render();
+</script>
+</body>
+</html>
