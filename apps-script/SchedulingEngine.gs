@@ -34,9 +34,19 @@ function buildRequirements(students, settings) {
   const groups = {};
 
   students.forEach(s => {
-    if (s.serviceType.toLowerCase() === 'group' && s.groupId) {
-      if (!groups[s.groupId]) groups[s.groupId] = [];
-      groups[s.groupId].push(s);
+    const ids = (s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : []);
+    if (s.serviceType.toLowerCase() === 'group' && ids.length) {
+      ids.forEach(gid => {
+        if (!groups[gid]) groups[gid] = [];
+        if (!groups[gid].some(m => m.id === s.id)) groups[gid].push(s);
+      });
+      if (ids.length > 1) {
+        warnings.push({
+          members: [s],
+          reqId: ids.join('+'),
+          message: 'In groups ' + ids.join(', ') + ' — minutes from each group session all count toward this student.'
+        });
+      }
     } else {
       requirements.push(buildRequirementSet(s.id, [s], settings, warnings));
     }
@@ -176,10 +186,11 @@ function isReqIdRepresented(scheduled, session) {
 }
 
 function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState) {
+  if (student.noGroup) return null;
   const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
 
   const candidates = hostCandidates.filter(entry => {
-    if (entry.members.some(m => m.id === student.id)) return false;     // not already in it
+    if (entry.members.some(m => m.id === student.id || m.noGroup)) return false;     // not already in it / host opted out of grouping
     if (entry.members.length >= settings.maxGroupSize) return false;    // already at the configured headcount cap
     const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;
     if (needsEveryWeek !== hostIsEveryWeek) return false;               // must match weekly-recurring vs. single-week shape
@@ -280,7 +291,7 @@ function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern
     if (session.members.length !== 1 || !individualsById[primary.id]) return;
 
     const hostCandidates = scheduled.filter(entry =>
-      (entry.week === 1 || entry.week === 2) && entry.members.every(m => individualsById[m.id])
+      (entry.week === 1 || entry.week === 2) && entry.members.every(m => !m.noGroup) && entry.members.length < settings.maxGroupSize
     );
     const host = tryJoinCompatibleHost(primary, session.sessionLength, false, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
     if (host) {
@@ -308,7 +319,7 @@ function attemptGroupRescue(unscheduled, scheduled, individualsById, settings, g
       const student = session.members[0];
       const needsEveryWeek = session.week === ALL_WEEKS_KEY;
 
-      const hostCandidates = scheduled.filter(entry => entry.members.every(m => individualsById[m.id]));
+      const hostCandidates = scheduled.filter(entry => entry.members.every(m => !m.noGroup) && entry.members.length < settings.maxGroupSize);
       const host = tryJoinCompatibleHost(student, session.sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
 
       if (host) {
@@ -345,7 +356,7 @@ function generateSchedule() {
   const studentsById = {};
   students.forEach(s => { studentsById[s.id] = s; });
   const individualsById = {};
-  students.forEach(s => { if (s.serviceType.toLowerCase() === 'individual') individualsById[s.id] = s; });
+  students.forEach(s => { if (s.serviceType.toLowerCase() === 'individual' && !s.noGroup) individualsById[s.id] = s; });
   const groupIdState = { counter: 0 }; // shared AUTO-GROUP numbering across the front-load pass and the general rescue pass
 
   const { requirements: requirementSets, warnings: capacityWarnings } = buildRequirements(students, settings);

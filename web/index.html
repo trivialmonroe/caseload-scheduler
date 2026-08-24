@@ -1,0 +1,2017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caseload — Scheduler</title>
+  <style>
+    :root {
+      --ink: #1c1917;
+      --muted: #78716c;
+      --line: #e7e5e4;
+      --paper: #faf7f2;
+      --card: #fff;
+      --accent: #0f766e;
+      --accent-2: #c2410c;
+      --ok: #166534;
+      --bad: #b91c1c;
+      --open: #dcfce7;
+      --blocked: #fecaca;
+      --off: #e7e5e4;
+      --shadow: 0 1px 2px rgba(28,25,23,.06), 0 8px 24px rgba(28,25,23,.06);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      grid-template-rows: 56px 1fr;
+      grid-template-areas: "top top" "nav main";
+    }
+    .top {
+      grid-area: top;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { font-weight: 700; letter-spacing: -.02em; font-size: 1.05rem; }
+    .brand span { color: var(--accent); }
+    .top .grow { flex: 1; }
+    .status {
+      font-size: 13px; color: var(--muted); max-width: 42%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .status.ok { color: var(--ok); }
+    .status.bad { color: var(--bad); }
+    button, .btn {
+      font: inherit; cursor: pointer; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--card); padding: 7px 12px;
+    }
+    button:hover, .btn:hover { background: #f5f5f4; }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    button.primary:hover { background: #44403c; }
+    button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+    aside {
+      grid-area: nav;
+      background: #fff;
+      border-right: 1px solid var(--line);
+      padding: 12px 8px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    aside .sec { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 10px 10px 4px; }
+    aside button.nav {
+      width: 100%; text-align: left; border: none; background: transparent;
+      padding: 8px 10px; border-radius: 8px; color: var(--ink);
+    }
+    aside button.nav.active { background: #ecfdf8; color: var(--accent); font-weight: 600; }
+    main { grid-area: main; overflow: auto; padding: 20px 24px 48px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; letter-spacing: -.02em; }
+    .lede { color: var(--muted); margin: 0 0 18px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 16px; box-shadow: var(--shadow);
+    }
+    .card h3 { margin: 0 0 8px; font-size: 1rem; }
+    .meta { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .stack { display: flex; flex-direction: column; gap: 14px; }
+    .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #f5f5f4; margin-right: 4px; }
+    .pill.teal { background: #ccfbf1; color: #115e59; }
+    .pill.warn { background: #ffedd5; color: #9a3412; }
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .stat b { display: block; font-size: 1.4rem; letter-spacing: -.03em; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); background: #fafaf9; }
+    tr.under td { background: #fef2f2; }
+    tr.met td { background: #f0fdf4; }
+    tr.auto td { background: #f5f3ff; }
+    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 4px; }
+    .chip {
+      border: 1px solid var(--line); border-radius: 99px; padding: 5px 11px; font-size: 12px; background: #fff; cursor: pointer;
+    }
+    .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+    input, select, textarea {
+      font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; background: #fff;
+    }
+    label { font-size: 12px; font-weight: 600; display: block; margin: 0 0 6px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; align-items: start; }
+    .modal-bg {
+      position: fixed; inset: 0; background: rgba(28,25,23,.4); display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal { background: #fff; border-radius: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; padding: 20px; box-shadow: var(--shadow); }
+    .cal { overflow-x: auto; }
+    .cal-grid { display: grid; grid-template-columns: 64px repeat(5, 1fr); min-width: 720px; border: 1px solid var(--line); background: #fff; }
+    .cal-grid > div { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-height: 28px; font-size: 11px; padding: 2px; }
+    .cal-head { background: var(--ink); color: #fff; text-align: center; padding: 8px !important; font-weight: 600; }
+    .sess {
+      border-radius: 6px; padding: 4px 6px; color: #fff; font-size: 11px; line-height: 1.25; height: 100%;
+    }
+    .heat td.open { background: var(--open); }
+    .heat td.blocked { background: var(--blocked); font-size: 10px; }
+    .heat td.off { background: var(--off); }
+    .drop {
+      border: 1.5px dashed var(--line); border-radius: 12px; padding: 16px; text-align: center; color: var(--muted); margin-bottom: 12px;
+      background: #fff;
+    }
+    .drop.hot { border-color: var(--accent); background: #f0fdfa; }
+    .hidden { display: none !important; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+    .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .stale {
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+      padding: 10px 12px; border-radius: 10px; margin-bottom: 16px; font-size: 13px;
+    }
+    .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+    .setup-col { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+    .setup-col h2 { margin: 0; font-size: 1.12rem; letter-spacing: -.02em; }
+    .setup-col > .meta { margin: 0; }
+    .setup-col > .row { margin: 0; }
+    @media (min-width: 981px) {
+      .setup-col + .setup-col { border-left: 1px solid var(--line); padding-left: 28px; }
+    }
+    .wizard {
+      background: #fff; border: 1px solid var(--line); border-radius: 12px;
+      padding: 16px 18px; margin-bottom: 18px; box-shadow: var(--shadow);
+    }
+    .wizard h3 { margin: 0 0 6px; font-size: 1rem; }
+    .wizard .meta { margin: 0 0 4px; }
+    .wizard ol { margin: 10px 0 0; padding-left: 20px; }
+    .wizard li { margin: 8px 0; }
+    .wizard li.done { color: var(--ok); }
+    .wizard .card-actions { margin-top: 12px; }
+    .popover {
+      position: relative; z-index: 40; background: #fff; border: 1px solid var(--line);
+      border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); margin: 0 0 18px; max-width: 720px;
+    }
+    .popover h3 { margin: 0 0 6px; }
+    .card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .field { margin-top: 12px; }
+    .chip-row { gap: 8px; }
+    .popover .chip-row { gap: 8px; margin-top: 8px; }
+    .week-cals, .open-grids { display: flex; flex-direction: column; gap: 20px; }
+    .card.cal h3 { margin: 0 0 12px; }
+    .sess.on { outline: 2px solid var(--ink); outline-offset: 1px; }
+    .mob-nav { display: none; }
+    .card.student { cursor: pointer; }
+    .card.student:hover { border-color: #d6d3d1; }
+    .modal { width: min(680px, 94vw); }
+    .modal-sec { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 16px; }
+    .block-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; background: #fafaf9; }
+    .pill.ok { background: #dcfce7; color: #166534; }
+    .pill.bad { background: #fee2e2; color: #b91c1c; }
+    .pill.warn { background: #ffedd5; color: #9a3412; }
+    button.danger { color: var(--bad); }
+    details.adv { margin-top: 16px; }
+    details.adv summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+    input[type="time"] { min-height: 38px; }
+    .sess { cursor: grab; user-select: none; }
+    .sess:hover { filter: brightness(1.08); }
+    .sess.dragging { opacity: .55; cursor: grabbing; }
+    .sess.locked-drag { cursor: pointer; }
+    .cal-slot { min-height: 28px; }
+    .cal-slot.drop-ok {
+      background: #dcfce7 !important;
+      box-shadow: inset 0 0 0 2px #16a34a;
+    }
+    .cal-slot.swap-ok {
+      box-shadow: inset 0 0 0 2px #d97706;
+      outline: 2px dashed #f59e0b;
+      outline-offset: -2px;
+    }
+    .cal-slot.swap-ok .sess { filter: saturate(1.15) brightness(1.05); }
+    .cal-slot.drop-hover {
+      background: #bbf7d0 !important;
+      box-shadow: inset 0 0 0 2px #15803d;
+    }
+    .cal-slot.swap-ok.drop-hover {
+      background: #ffedd5 !important;
+      box-shadow: inset 0 0 0 2px #c2410c;
+    }
+    .cal-grid.dnd-active .cal-slot:not(.drop-ok):not(.swap-ok) {
+      background: #fafaf9;
+    }
+    .chip.swap {
+      border-color: #f59e0b;
+      background: #fffbeb;
+      color: #92400e;
+    }
+    .dnd-hint {
+      font-size: 13px; color: var(--muted); margin: 0 0 12px;
+    }
+    .cal-legend {
+      display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 12px; color: var(--muted);
+      margin: 0 0 12px; align-items: center;
+    }
+    .cal-legend .leg { display: inline-flex; align-items: center; gap: 6px; }
+    .cal-legend .swatch {
+      width: 14px; height: 14px; border-radius: 4px; display: inline-block;
+    }
+    .cal-legend .swatch.green { background: #dcfce7; box-shadow: inset 0 0 0 2px #16a34a; }
+    .cal-legend .swatch.amber { background: #fffbeb; box-shadow: inset 0 0 0 2px #d97706; outline: 1px dashed #f59e0b; }
+    .week-layout {
+      display: grid; grid-template-columns: 1fr; gap: 0; align-items: start;
+    }
+    @media (min-width: 1100px) {
+      .week-layout.drawer-open { grid-template-columns: 1fr min(340px, 32vw); gap: 16px; }
+    }
+    .session-drawer {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 14px 16px; box-shadow: var(--shadow); max-height: calc(100vh - 120px);
+      overflow: auto; position: sticky; top: 72px;
+    }
+    .session-drawer h3 { margin: 0 0 4px; font-size: 1rem; }
+    .session-drawer details.drawer-sec {
+      border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px;
+    }
+    .session-drawer details.drawer-sec > summary {
+      cursor: pointer; font-weight: 600; font-size: 13px; list-style: none;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .session-drawer details.drawer-sec > summary::-webkit-details-marker { display: none; }
+    .sess-badge {
+      display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .03em;
+      padding: 1px 4px; border-radius: 4px; margin-right: 4px; vertical-align: middle;
+      background: rgba(0,0,0,.22);
+    }
+    .sess-badge.auto { background: rgba(255,255,255,.28); }
+    .cal-grid.compact-cal > div { min-height: 20px; }
+    .cal-grid.compact-cal .sess { font-size: 10px; padding: 2px 4px; line-height: 1.2; }
+    .cal-grid.compact-cal .sess-sub { display: none; }
+    .cal-grid.compact-cal .sess-badge { display: none; }
+    .coverage-banner {
+      border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412;
+      padding: 10px 12px; border-radius: 10px; margin: 0 0 14px; font-size: 13px;
+    }
+    .coverage-banner.ok { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+    .print-panel .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 12px 0; }
+    .print-panel label.chk { font-weight: 500; display: flex; gap: 8px; align-items: center; margin: 0; }
+    .print-panel input[type="checkbox"] { width: auto; }
+    .member-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+    .member-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+    .sess .sess-sub { display: block; opacity: .9; font-size: 10px; }
+    @media print {
+      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .session-drawer, .print-panel { display: none !important; }
+      body { display: block; background: #fff; }
+      main { padding: 0; }
+      .week-cals { gap: 24px; }
+      .card.cal { break-inside: avoid; box-shadow: none; }
+      body.print-week h1,
+      body.print-week .lede,
+      body.print-week .stat-grid,
+      body.print-week .row { display: none !important; }
+      body.print-week .print-only { display: block !important; }
+      body.print-hide-times .sess-time { display: none !important; }
+      body.print-hide-teachers .sess-teacher { display: none !important; }
+      body.print-hide-groups .sess-group { display: none !important; }
+      body.print-compact .cal-grid > div { min-height: 22px; padding: 1px; }
+      body.print-compact .sess { font-size: 10px; padding: 2px 4px; }
+    }
+    .print-only { display: none; }
+    @media (max-width: 980px) {
+      .setup-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; grid-template-areas: "top" "mob" "main"; }
+      aside { display: none; }
+      .mob-nav {
+        display: flex; grid-area: mob; gap: 6px; padding: 8px 12px; overflow-x: auto;
+        background: #fff; border-bottom: 1px solid var(--line);
+      }
+      .mob-nav button { white-space: nowrap; }
+      .mob-nav button.active { background: #ecfdf8; color: var(--accent); font-weight: 600; }
+      .stat-grid { grid-template-columns: 1fr 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">Caseload <span>Scheduler</span></div>
+    <div class="grow"></div>
+    <div class="status" id="status">Ready</div>
+    <button type="button" onclick="validateNow()">Check</button>
+    <button type="button" id="undo-edit-btn" class="ghost hidden" onclick="undoLastEdit()" title="Undo edit (Ctrl+Z)">Undo</button>
+    <button type="button" id="redo-edit-btn" class="ghost hidden" onclick="redoLastEdit()" title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <button type="button" class="primary" onclick="generateNow()">Generate schedule</button>
+    <button type="button" id="undo-btn" class="hidden" onclick="undoLastGenerate()">Undo generate</button>
+  </div>
+  <aside>
+    <div class="sec">Caseload</div>
+    <button type="button" class="nav active" data-view="students" onclick="showView('students')">Students</button>
+    <button type="button" class="nav" data-view="setup" onclick="showView('setup')">Hours &amp; grades</button>
+    <div class="sec">Schedule</div>
+    <button type="button" class="nav" data-view="schedule" onclick="showView('schedule')">Week &amp; coverage</button>
+    <div class="sec">File</div>
+    <button type="button" class="nav" data-view="files" onclick="showView('files')">Import / export</button>
+    <button type="button" class="nav" data-view="settings" onclick="showView('settings')">Settings</button>
+  </aside>
+  <nav class="mob-nav">
+    <button type="button" data-view="students" onclick="showView('students')">Students</button>
+    <button type="button" data-view="setup" onclick="showView('setup')">Hours &amp; grades</button>
+    <button type="button" data-view="schedule" onclick="showView('schedule')">Schedule</button>
+    <button type="button" data-view="files" onclick="showView('files')">File</button>
+    <button type="button" data-view="settings" onclick="showView('settings')">Settings</button>
+  </nav>
+  <main id="main"></main>
+  <input id="filePick" type="file" class="hidden" multiple accept=".json,.csv,.xlsx,.xls,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="engine.js"></script>
+<script>
+'use strict';
+
+const STORE = 'caseload.workspace.v2';
+let view = 'students';
+let scheduleTab = 'week';
+let showAllWeeks = false;
+let altFor = null;
+let studentQuery = '';
+let csvImportMode = 'replace';
+let caseloadDirty = false;
+let undoSnapshot = null;
+let editUndoStack = [];
+let editRedoStack = [];
+let showPrintPanel = false;
+let compactCalendar = false;
+let dragState = null; // { index, keys: {'Mon|480': true}, weekLabel }
+let suppressSessionClick = false;
+let printOpts = {
+  teachers: true,
+  groups: true,
+  times: true,
+  grades: true,
+  coverage: false,
+  compact: false,
+  allWeeks: false,
+};
+
+function blankWorkspace() {
+  return {
+    version: 2,
+    settings: Object.assign({}, DEFAULT_SETTINGS),
+    students: [],
+    availability: [],
+    grades: [],
+    constraints: [],
+    scheduleLog: [],
+    lastRun: null,
+  };
+}
+
+function sampleWorkspace() {
+  const w = blankWorkspace();
+  w.availability = [
+    { day: 'Mon-Fri', start: '8:00 AM', end: '11:00 AM', pattern: '', notes: '' },
+    { day: 'Mon, Wed', start: '12:30 PM', end: '3:00 PM', pattern: '', notes: '' },
+    { day: 'Tue, Thu, Fri', start: '12:30 PM', end: '2:30 PM', pattern: '', notes: '' },
+  ];
+  w.grades = [
+    { grade: '2', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' },
+    { grade: '2', day: 'Tue', start: '1:00 PM', end: '1:45 PM', reason: 'Specials' },
+    { grade: 'K', day: 'Mon, Wed', start: '9:00 AM', end: '9:30 AM', reason: 'Recess' },
+    { grade: '3', day: 'Mon-Fri', start: '11:00 AM', end: '11:45 AM', reason: 'Lunch' },
+  ];
+  w.constraints = [
+    { studentId: 'SMITHJ01', day: 'Tue', start: '10:00 AM', end: '10:30 AM', reason: 'OT' },
+    { studentId: 'JONESM02', day: 'Mon-Fri', start: '8:00 AM', end: '8:30 AM', reason: 'Resource room' },
+  ];
+  w.students = [
+    { id: 'SMITHJ01', firstName: 'John', lastName: 'Smith', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mrs. Lee — Rm 204', fixedDay: '', fixedStart: '' },
+    { id: 'JONESM02', firstName: 'Mary', lastName: 'Jones', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 90, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Kim — Rm 210', fixedDay: '', fixedStart: '' },
+    { id: 'DOEA03', firstName: 'Alex', lastName: 'Doe', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Quarterly', minutesPerWeek: '', preferredSessionLength: '', sessionsPerQuarter: 8, quarterlySessionLength: 30, notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
+    { id: 'LEEB04', firstName: 'Bri', lastName: 'Lee', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 30, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
+    { id: 'PARKC05', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1', groupIds: ['G1'], frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+    { id: 'RIOSD06', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1', groupIds: ['G1'], frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+  ];
+  return w;
+}
+
+let state = blankWorkspace();
+
+function persist() {
+  try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+}
+function persistCaseload() {
+  if ((state.scheduleLog || []).length) caseloadDirty = true;
+  persist();
+}
+function hydrate() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (raw != null) state = Object.assign(blankWorkspace(), JSON.parse(raw));
+  } catch (e) {}
+}
+
+function setStatus(msg, kind) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
+function showView(id, tab) {
+  view = id;
+  if (tab) scheduleTab = tab;
+  if (id !== 'schedule') altFor = null;
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.getAttribute('data-view') === id));
+  render();
+}
+
+function engineInput() {
+  return {
+    settings: state.settings,
+    students: state.students,
+    availability: state.availability,
+    grades: state.grades,
+    constraints: state.constraints,
+    scheduleLog: state.scheduleLog,
+  };
+}
+
+function toTimeInput(display) {
+  try {
+    const m = timeStrToMinutes(display);
+    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  } catch (e) { return ''; }
+}
+function fromTimeInput(value) {
+  if (!value) return '';
+  try { return minutesToTimeStr(timeStrToMinutes(value)); } catch (e) { return value; }
+}
+
+function uniqueValues(arr) {
+  const set = {};
+  arr.forEach(v => { const s = String(v || '').trim(); if (s) set[s] = true; });
+  return Object.keys(set).sort();
+}
+function knownGrades() {
+  return uniqueValues(state.grades.map(g => g.grade).concat(state.students.map(s => s.grade)));
+}
+function knownGroups() {
+  const all = [];
+  state.students.forEach(s => {
+    const ids = (s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : []);
+    ids.forEach(g => all.push(g));
+  });
+  return uniqueValues(all);
+}
+function studentLabel(id) {
+  const s = state.students.find(x => x.id === id);
+  return s ? (s.lastName + ', ' + s.firstName) : (id || 'Unknown');
+}
+function studentNeed(s) {
+  if ((s.frequencyType || 'Weekly') === 'Quarterly') return (s.sessionsPerQuarter || '?') + ' × ' + (s.quarterlySessionLength || '?') + ' min / qtr';
+  return (s.minutesPerWeek || 0) + ' min / week';
+}
+function coverageFor(id) {
+  return reviewRows().find(r => r.id === id);
+}
+function blocksFor(id) {
+  return state.constraints.filter(c => c.studentId === id);
+}
+function suggestId(s) {
+  const last = String(s.lastName || 'X').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 8) || 'X';
+  const first = String(s.firstName || 'X').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 1) || 'X';
+  let n = 1, id;
+  do { id = last + first + String(n).padStart(2, '0'); n += 1; }
+  while (state.students.some(x => x.id === id));
+  return id;
+}
+
+function staleBanner() {
+  if (!caseloadDirty || !(state.scheduleLog || []).length) return '';
+  return `<div class="stale no-print">Caseload changed since the last generate. <button class="primary" onclick="generateNow()">Generate again</button></div>`;
+}
+
+function snapshotSchedule() {
+  return {
+    scheduleLog: JSON.parse(JSON.stringify(state.scheduleLog || [])),
+    lastRun: state.lastRun ? JSON.parse(JSON.stringify(state.lastRun)) : null,
+    caseloadDirty: caseloadDirty,
+  };
+}
+
+function generateNow() {
+  const issues = validateCaseload(state);
+  if (issues.length) {
+    if (!confirm(issues.length + ' issue(s). First:\n' + issues[0] + '\n\nGenerate anyway?')) {
+      setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
+      return;
+    }
+  }
+  const prev = snapshotSchedule();
+  const result = runSchedulingEngine(engineInput());
+  if (result.error) { setStatus(result.error, 'bad'); return; }
+  undoSnapshot = prev;
+  editUndoStack = [];
+  editRedoStack = [];
+  state.scheduleLog = result.logRows;
+  state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
+  caseloadDirty = false;
+  persist();
+  setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
+  scheduleTab = 'week';
+  showView('schedule');
+}
+
+function undoLastGenerate() {
+  if (!undoSnapshot) return;
+  state.scheduleLog = undoSnapshot.scheduleLog;
+  state.lastRun = undoSnapshot.lastRun;
+  caseloadDirty = undoSnapshot.caseloadDirty;
+  undoSnapshot = null;
+  persist();
+  setStatus('Restored the previous schedule.', 'ok');
+  render();
+}
+
+function snapshotForEdit() {
+  return {
+    scheduleLog: JSON.parse(JSON.stringify(state.scheduleLog || [])),
+    lastRun: state.lastRun ? JSON.parse(JSON.stringify(state.lastRun)) : null,
+  };
+}
+
+function beginEdit(label) {
+  if (!(state.scheduleLog || []).length && label !== 'Lock') return;
+  editUndoStack.push(Object.assign({ label: label || 'Edit' }, snapshotForEdit()));
+  if (editUndoStack.length > 40) editUndoStack.shift();
+  editRedoStack = [];
+  updateEditUndoButtons();
+}
+
+function restoreEditSnapshot(snap) {
+  state.scheduleLog = snap.scheduleLog;
+  state.lastRun = snap.lastRun;
+  persist();
+}
+
+function undoLastEdit() {
+  if (!editUndoStack.length) return;
+  editRedoStack.push(Object.assign({ label: 'Redo point' }, snapshotForEdit()));
+  const snap = editUndoStack.pop();
+  restoreEditSnapshot(snap);
+  altFor = null;
+  dragState = null;
+  refreshLiveReview('Undid: ' + (snap.label || 'edit') + '.');
+  render();
+}
+
+function redoLastEdit() {
+  if (!editRedoStack.length) return;
+  editUndoStack.push(Object.assign({ label: 'Undo point' }, snapshotForEdit()));
+  const snap = editRedoStack.pop();
+  restoreEditSnapshot(snap);
+  refreshLiveReview('Redid edit.');
+  render();
+}
+
+function updateEditUndoButtons() {
+  const u = document.getElementById('undo-edit-btn');
+  const r = document.getElementById('redo-edit-btn');
+  if (u) u.classList.toggle('hidden', !editUndoStack.length);
+  if (r) r.classList.toggle('hidden', !editRedoStack.length);
+}
+
+function jumpToStudentSession(studentId) {
+  const i = (state.scheduleLog || []).findIndex(row => String(row.studentId) === String(studentId));
+  if (i < 0) { setStatus('No session on the calendar for that student yet.', 'bad'); return; }
+  altFor = i;
+  scheduleTab = 'week';
+  showView('schedule');
+  requestAnimationFrame(() => {
+    const el = document.querySelector('.sess.on') || document.querySelector('.sess[data-log-index="' + i + '"]');
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+}
+
+function loadSampleAndGenerate() {
+  state = sampleWorkspace();
+  caseloadDirty = false;
+  persist();
+  generateNow();
+}
+
+function setupProgress() {
+  return {
+    hours: (state.availability || []).length > 0,
+    grades: (state.grades || []).length > 0,
+    students: (state.students || []).length > 0,
+  };
+}
+
+function needsOnboarding() {
+  const p = setupProgress();
+  return !p.hours || !p.grades || !p.students;
+}
+
+function wizardHtml() {
+  if (!needsOnboarding()) return '';
+  const p = setupProgress();
+  const item = (done, todo, doneText) => done
+    ? '<li class="done">' + doneText + '</li>'
+    : '<li>' + todo + '</li>';
+  return `<div class="wizard no-print">
+    <h3>Get a schedule in three steps</h3>
+    <p class="meta">Hours, then grade lunches, then students. Or load the sample caseload to see a finished week.</p>
+    <ol>
+      ${item(p.hours, '<a href="#" onclick="showView(\'setup\');return false">Add your working hours</a>', 'Hours added.')}
+      ${item(p.grades, '<a href="#" onclick="showView(\'setup\');return false">Add lunch / recess for each grade</a>', 'Grade blocks added.')}
+      ${item(p.students, '<a href="#" onclick="showView(\'students\');return false">Add your first student</a>', 'Students added.')}
+    </ol>
+    <div class="card-actions">
+      <button type="button" class="primary" onclick="loadSampleAndGenerate()">Load sample caseload</button>
+    </div>
+  </div>`;
+}
+
+function validateNow() {
+  const issues = validateCaseload(state);
+  if (!issues.length) setStatus('Looks ready to generate.', 'ok');
+  else setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
+  render();
+}
+
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 500);
+}
+
+function exportWorkspace() {
+  downloadText('caseload-workspace.json', JSON.stringify(state, null, 2), 'application/json');
+  setStatus('Saved workspace JSON.', 'ok');
+}
+
+function exportCsv(kind) {
+  const map = {
+    students: state.students,
+    availability: state.availability,
+    grades: state.grades,
+    constraints: state.constraints,
+    schedule: state.scheduleLog,
+  };
+  downloadText(kind + '.csv', objectsToCsv(map[kind] || [], CSV_SCHEMAS[kind]), 'text/csv');
+  setStatus('Exported ' + kind + '.csv', 'ok');
+}
+
+function mergeBy(existing, incoming, keyFn) {
+  const map = {};
+  existing.forEach(r => { map[keyFn(r)] = r; });
+  incoming.forEach(r => { map[keyFn(r)] = Object.assign({}, map[keyFn(r)] || {}, r); });
+  return Object.values(map);
+}
+
+function importJsonText(text) {
+  const data = JSON.parse(text);
+  state = Object.assign(blankWorkspace(), data);
+  caseloadDirty = false;
+  editUndoStack = [];
+  editRedoStack = [];
+  persist();
+  setStatus('Opened workspace.', 'ok');
+  render();
+}
+
+function importCsvText(name, text) {
+  const rows = csvToObjects(text);
+  if (!rows.length) { setStatus('Empty CSV.', 'bad'); return; }
+  const headers = Object.keys(rows[0]);
+  const kind = detectCsvKind(headers, name);
+  if (!kind) { setStatus('Could not detect CSV type. Use Apps Script tab names (Students.csv, MyAvailability.csv, …) or web headers.', 'bad'); return; }
+  const merge = csvImportMode === 'merge';
+  if (!merge && kind === 'students' && state.students.length && !confirm('Replace all ' + state.students.length + ' students with this CSV?')) return;
+  if (!merge && kind === 'availability' && state.availability.length && !confirm('Replace all hours with this CSV?')) return;
+  if (!merge && kind === 'grades' && state.grades.length && !confirm('Replace all grade blocks with this CSV?')) return;
+  if (!merge && kind === 'constraints' && state.constraints.length && !confirm('Replace all student blocks with this CSV?')) return;
+  const imports = {};
+  imports[kind] = rows;
+  applyWorkbookImports(state, imports, { merge: kind === 'settings' ? true : merge });
+  if (kind === 'schedule') {
+    if ((state.scheduleLog || []).length) refreshLiveReview('Imported schedule.');
+    caseloadDirty = false;
+  } else {
+    caseloadDirty = true;
+  }
+  persist();
+  setStatus((merge && kind !== 'schedule' ? 'Merged ' : 'Imported ') + kind + ' (' + rows.length + ' rows).', 'ok');
+  render();
+}
+
+function importWorkbookFromSheets(sheetMap, label) {
+  const keys = Object.keys(sheetMap);
+  if (!keys.length) { setStatus('No recognized input sheets in file.', 'bad'); return; }
+  if (!confirm('Import ' + keys.join(', ') + ' from ' + label + '? Input tables will be replaced (schedule kept if not present).')) return;
+  applyWorkbookImports(state, sheetMap, { merge: false });
+  if (sheetMap.schedule) refreshLiveReview('Imported schedule from workbook.');
+  else caseloadDirty = true;
+  editUndoStack = [];
+  editRedoStack = [];
+  persist();
+  setStatus('Imported workbook: ' + keys.join(', '), 'ok');
+  render();
+}
+
+function parseXlsxToImports(buf) {
+  if (typeof XLSX === 'undefined') throw new Error('Spreadsheet library not loaded.');
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const imports = {};
+  wb.SheetNames.forEach(name => {
+    let kind = sheetNameToKind(name);
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' });
+    if (!rows.length) return;
+    if (!kind) kind = detectCsvKind(Object.keys(rows[0]), name);
+    if (!kind) return;
+    if (!imports[kind]) imports[kind] = [];
+    imports[kind] = imports[kind].concat(rows);
+  });
+  return imports;
+}
+
+function importXlsxBuffer(buf, filename) {
+  try {
+    importWorkbookFromSheets(parseXlsxToImports(buf), filename || 'workbook');
+  } catch (e) {
+    setStatus('Could not read spreadsheet: ' + e.message, 'bad');
+  }
+}
+
+async function importMultipleFiles(files) {
+  const imports = {};
+  let jsonPayload = null;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (/\.xlsx?$/i.test(f.name)) {
+      const buf = await f.arrayBuffer();
+      const xlsxImports = parseXlsxToImports(buf);
+      Object.keys(xlsxImports).forEach(kind => {
+        if (!imports[kind]) imports[kind] = [];
+        imports[kind] = imports[kind].concat(xlsxImports[kind]);
+      });
+      continue;
+    }
+    const text = await f.text();
+    if (/\.json$/i.test(f.name) || text.trim().startsWith('{')) {
+      jsonPayload = text;
+      continue;
+    }
+    const rows = csvToObjects(text);
+    if (!rows.length) continue;
+    const kind = detectCsvKind(Object.keys(rows[0]), f.name);
+    if (!kind) continue;
+    if (!imports[kind]) imports[kind] = [];
+    imports[kind] = imports[kind].concat(rows);
+  }
+  if (Object.keys(imports).length) {
+    importWorkbookFromSheets(imports, files.length + ' files');
+    if (jsonPayload) setStatus('Imported tables; skipped workspace JSON when combined with CSV/Excel.', 'ok');
+    return;
+  }
+  if (jsonPayload) {
+    importJsonText(jsonPayload);
+    return;
+  }
+  setStatus('No recognized CSV/Excel tables in selection.', 'bad');
+}
+
+function importText(name, text) {
+  if (/\.json$/i.test(name) || text.trim().startsWith('{')) {
+    importJsonText(text);
+    return;
+  }
+  importCsvText(name, text);
+}
+
+function importBinaryFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => importXlsxBuffer(reader.result, file.name);
+  reader.readAsArrayBuffer(file);
+}
+
+function handleFileList(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (files.length === 1) {
+    const f = files[0];
+    if (/\.xlsx?$/i.test(f.name)) { importBinaryFile(f); return; }
+    const reader = new FileReader();
+    reader.onload = () => importText(f.name, reader.result);
+    reader.readAsText(f);
+    return;
+  }
+  importMultipleFiles(files);
+}
+
+function pickFile() { document.getElementById('filePick').click(); }
+document.getElementById('filePick').addEventListener('change', (e) => {
+  handleFileList(e.target.files);
+  e.target.value = '';
+});
+
+function reviewRows() {
+  if (state.lastRun && state.lastRun.review) return state.lastRun.review;
+  return [];
+}
+
+function refreshLiveReview(note) {
+  if (!(state.scheduleLog || []).length) return;
+  const review = reviewFromScheduleLog(engineInput());
+  const under = review.filter(r => r.status === 'Under').length;
+  const over = review.filter(r => r.status === 'Over').length;
+  const met = review.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  if (!state.lastRun) state.lastRun = { at: new Date().toISOString() };
+  state.lastRun.review = review;
+  state.lastRun.unplaced = under; // surface under-covered as attention metric after edits
+  persist();
+  let msg = note || 'Schedule updated.';
+  if (under || over) {
+    msg += ' Coverage: ' + met + '/' + review.length + ' meeting minutes';
+    if (under) msg += ' · ' + under + ' under';
+    if (over) msg += ' · ' + over + ' over';
+    setStatus(msg, under ? 'bad' : 'ok');
+  } else {
+    setStatus(msg + ' All students meeting minutes.', 'ok');
+  }
+}
+
+function coverageBannerHtml() {
+  const rev = reviewRows();
+  if (!rev.length || !(state.scheduleLog || []).length) return '';
+  const under = rev.filter(r => r.status === 'Under');
+  const over = rev.filter(r => r.status === 'Over');
+  if (!under.length && !over.length) {
+    return '<div class="coverage-banner ok no-print">Live coverage: every active student is meeting required minutes.</div>';
+  }
+  const bits = [];
+  under.slice(0, 4).forEach(r => bits.push(esc(r.name) + ' under (' + r.scheduled + '/' + r.required + ')'));
+  over.slice(0, 4).forEach(r => bits.push(esc(r.name) + ' over (' + r.scheduled + '/' + r.required + ')'));
+  const more = (under.length + over.length) > bits.length ? ' …' : '';
+  return '<div class="coverage-banner no-print"><b>Coverage needs attention.</b> ' + bits.join(' · ') + more +
+    ' <button type="button" onclick="scheduleTab=\'coverage\';render()">Open coverage</button></div>';
+}
+
+function formatSessionCell(entry, opts) {
+  const o = opts || printOpts;
+  const names = entry.names.join(' + ');
+  let sub = [];
+  if (o.times !== false) sub.push('<span class="sess-time">' + esc(minutesToTimeStr(entry.start) + '–' + minutesToTimeStr(entry.end)) + '</span>');
+  if (o.groups && entry.groupId) sub.push('<span class="sess-group">' + esc(entry.groupId) + '</span>');
+  if (o.teachers && entry.teachers && entry.teachers.length) {
+    const t = entry.teachers.filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    if (t.length) sub.push('<span class="sess-teacher">' + esc(t.join(', ')) + '</span>');
+  }
+  return esc(names) + (sub.length ? '<span class="sess-sub">' + sub.join(' · ') + '</span>' : '');
+}
+
+function renderSchedule() {
+  const tabs = [['week','Week'],['coverage','Coverage'],['sessions','Sessions'],['open','Open slots']];
+  let html = `<h1>Schedule</h1>
+    <div class="tabs no-print">${tabs.map(([id, label]) =>
+      `<button type="button" class="${scheduleTab === id ? 'on' : ''}" onclick="scheduleTab='${id}';altFor=null;render()">${label}</button>`
+    ).join('')}</div>` + staleBanner();
+  if (scheduleTab === 'coverage') return html + renderReviewBody();
+  if (scheduleTab === 'sessions') return html + renderSessionsBody();
+  if (scheduleTab === 'open') return html + renderOpenBody();
+  return html + renderWeekBody();
+}
+
+function sessionPopoverHtml() {
+  if (altFor == null || !state.scheduleLog[altFor]) return '';
+  const row = state.scheduleLog[altFor];
+  const locked = String(row.locked).toLowerCase() === 'yes';
+  const autoGroup = String(row.groupId || '').indexOf('AUTO-GROUP-') === 0;
+  const mates = sessionMateRows(state.scheduleLog, row);
+  const found = findAlternativeSlots(engineInput(), row);
+  const swapsFound = findSwapCandidates(engineInput(), row);
+  const review = reviewRows();
+  const memberIds = mates.map(r => String(r.studentId));
+  const addOptions = state.students.filter(s => {
+    if (String(s.status || 'Active').toLowerCase() !== 'active') return false;
+    if (memberIds.indexOf(String(s.id)) >= 0) return false;
+    if (s.noGroup) return false;
+    return true;
+  });
+  let html = `<aside class="session-drawer no-print" id="session-popover">
+    <div class="row" style="margin:0 0 8px;justify-content:space-between">
+      <h3>Session editor</h3>
+      <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
+    </div>
+    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}${locked ? ' · 🔒 Locked' : ''}${autoGroup ? ' · Auto-group' : ''}</p>
+    <details class="drawer-sec" open><summary>Members</summary>
+    <div class="member-list">`;
+  mates.forEach(m => {
+    const cov = review.find(r => r.id === m.studentId);
+    const covTxt = cov ? (cov.status + ' · ' + cov.scheduled + '/' + cov.required + ' min') : '';
+    html += `<div class="member-row">
+      <span>${esc(m.name)} <span class="meta">Gr ${esc(m.grade)}</span></span>
+      ${covTxt ? `<span class="pill ${cov.status === 'Under' ? 'bad' : (cov.status === 'Over' ? 'warn' : 'ok')}">${esc(covTxt)}</span>` : ''}
+      ${mates.length > 1 ? `<button type="button" class="ghost danger" onclick="removeFromSession('${esc(m.studentId)}')">Remove</button>` : ''}
+    </div>`;
+  });
+  html += `</div>
+    <div class="field" style="margin-top:10px"><label>Add student</label>
+      <div class="row" style="margin:0">
+        <select id="add-member" style="max-width:240px"><option value="">Choose…</option>${addOptions.map(s =>
+          `<option value="${esc(s.id)}">${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select>
+        <button type="button" onclick="addToSession()">Add</button>
+      </div></div></details>
+    <details class="drawer-sec" open><summary>Move to open time</summary>
+      <div class="chip-row">`;
+  if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
+  else {
+    const list = found.candidates || [];
+    if (!list.length) html += '<span class="meta">No open slots — try a swap or drag on the calendar.</span>';
+    list.slice(0, 16).forEach((c, n) => {
+      html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
+    });
+    if (list.length > 16) html += `<span class="meta">+${list.length - 16} more on calendar (green cells)</span>`;
+  }
+  html += `</div></details>
+    <details class="drawer-sec"${(swapsFound.swaps || []).length ? ' open' : ''}><summary>Swap with another session</summary>
+      <p class="meta">Trade places when the week is full. Drop on amber-outlined blocks.</p>
+      <div class="chip-row">`;
+  if (swapsFound.error) html += `<span class="meta">${esc(swapsFound.error)}</span>`;
+  else {
+    const swaps = swapsFound.swaps || [];
+    if (!swaps.length) html += '<span class="meta">No valid swaps with other unlocked sessions.</span>';
+    swaps.forEach((s, n) => {
+      html += `<button type="button" class="chip swap" onclick="applySwap(${n})">↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}</button>`;
+    });
+  }
+  html += `</div></details>
+    <div class="card-actions">
+      <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
+    </div></aside>`;
+  return html;
+}
+
+function addToSession() {
+  const sel = document.getElementById('add-member');
+  const studentId = sel && sel.value;
+  if (!studentId || altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const check = canAddStudentToSession(engineInput(), row, studentId);
+  if (!check.ok) { setStatus(check.error, 'bad'); return; }
+  if (check.warning && !confirm(check.warning + '\n\nAdd them anyway?')) return;
+  beginEdit('Add member');
+  const s = state.students.find(x => x.id === studentId);
+  let gid = String(row.groupId || '').trim();
+  if (!gid) {
+    gid = 'EDIT-GROUP-' + Date.now().toString(36).toUpperCase();
+    sessionMateRows(state.scheduleLog, row).forEach(r => { r.groupId = gid; });
+  }
+  state.scheduleLog.push({
+    studentId: s.id,
+    name: s.firstName + ' ' + s.lastName,
+    grade: s.grade,
+    groupId: gid,
+    week: row.week,
+    day: row.day,
+    start: row.start,
+    end: row.end,
+    duration: row.duration,
+    teacher: s.teacher || '',
+    locked: row.locked || ''
+  });
+  // Keep altFor on the original row index (still valid)
+  refreshLiveReview('Added ' + s.firstName + ' to the session.');
+  render();
+}
+
+function removeFromSession(studentId) {
+  if (altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const mates = sessionMateRows(state.scheduleLog, row);
+  if (mates.length <= 1) { setStatus('Cannot remove the only member.', 'bad'); return; }
+  beginEdit('Remove member');
+  const idx = state.scheduleLog.findIndex(r =>
+    String(r.studentId) === String(studentId)
+    && String(r.week) === String(row.week)
+    && String(r.day) === String(row.day)
+    && String(r.start) === String(row.start)
+    && String(r.groupId || '') === String(row.groupId || '')
+  );
+  if (idx < 0) return;
+  const name = state.scheduleLog[idx].name;
+  state.scheduleLog.splice(idx, 1);
+  if (altFor === idx) {
+    const next = state.scheduleLog.findIndex(r =>
+      String(r.week) === String(row.week)
+      && String(r.day) === String(row.day)
+      && String(r.start) === String(row.start)
+      && String(r.groupId || '') === String(row.groupId || '')
+    );
+    altFor = next >= 0 ? next : null;
+  } else if (altFor > idx) {
+    altFor -= 1;
+  }
+  refreshLiveReview('Removed ' + name + ' from the session.');
+  render();
+}
+
+function closeSessionPopover() {
+  altFor = null;
+  render();
+}
+
+function printOptionsHtml() {
+  if (!showPrintPanel) return '';
+  const o = printOpts;
+  const chk = (key, label) =>
+    `<label class="chk"><input type="checkbox" ${o[key] ? 'checked' : ''} onchange="printOpts.${key}=this.checked"> ${label}</label>`;
+  return `<div class="card print-panel no-print">
+    <h3>Print options</h3>
+    <p class="meta">Choose what appears on the printed week calendars, then print.</p>
+    <div class="check-grid">
+      ${chk('times', 'Session times')}
+      ${chk('teachers', 'Teachers / rooms')}
+      ${chk('groups', 'Group IDs')}
+      ${chk('grades', 'Grade color legend')}
+      ${chk('coverage', 'Coverage summary')}
+      ${chk('compact', 'Compact rows')}
+      ${chk('allWeeks', 'All quarter weeks (not just 2-week snapshot)')}
+    </div>
+    <div class="card-actions">
+      <button type="button" class="primary" onclick="runPrint()">Print</button>
+      <button type="button" class="ghost" onclick="showPrintPanel=false;render()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function openPrintOptions() {
+  scheduleTab = 'week';
+  altFor = null;
+  showPrintPanel = true;
+  render();
+}
+
+function runPrint() {
+  scheduleTab = 'week';
+  altFor = null;
+  showPrintPanel = false;
+  if (printOpts.allWeeks) showAllWeeks = true;
+  else showAllWeeks = false;
+  document.body.classList.add('print-week');
+  document.body.classList.toggle('print-hide-times', !printOpts.times);
+  document.body.classList.toggle('print-hide-teachers', !printOpts.teachers);
+  document.body.classList.toggle('print-hide-groups', !printOpts.groups);
+  document.body.classList.toggle('print-compact', !!printOpts.compact);
+  render();
+  requestAnimationFrame(() => window.print());
+}
+
+function printWeek() { openPrintOptions(); }
+
+function renderWeekBody() {
+  const log = state.scheduleLog || [];
+  const rev = reviewRows();
+  const met = rev.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  if (!log.length) {
+    return `${wizardHtml()}<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
+      <div class="row no-print">
+        <button class="primary" onclick="state=sampleWorkspace();caseloadDirty=false;persist();generateNow()">Load sample &amp; generate</button>
+        <button onclick="pickFile()">Open JSON / CSV</button>
+      </div>`;
+  }
+  const cal = buildCalendarModel(log, state.settings, showAllWeeks, state.availability);
+  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered.</p>
+    <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it, or onto an amber-outlined session to <b>swap</b> places. Click a block to lock, edit members, or pick a move/swap. Coverage is a report tab — edits happen on this calendar.</p>
+    ${coverageBannerHtml()}
+    <div class="stat-grid no-print">
+      <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
+      <div class="stat"><b>${met}</b><span>Students meeting minutes</span></div>
+      <div class="stat"><b>${rev.filter(r => r.status === 'Under').length}</b><span>Under minutes</span></div>
+      <div class="stat"><b>${(state.lastRun && state.lastRun.rescued) || 0}</b><span>Auto-grouped</span></div>
+    </div>
+    <div class="row no-print">
+      <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
+      <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
+      <button type="button" class="${compactCalendar ? 'primary' : ''}" onclick="compactCalendar=!compactCalendar;render()">Compact calendar</button>
+      <button onclick="openPrintOptions()">Print…</button>
+      ${undoSnapshot ? `<button type="button" onclick="undoLastGenerate()">Undo generate</button>` : ''}
+      <button onclick="exportCsv('schedule')">Export schedule CSV</button>
+    </div>
+    <div class="cal-legend no-print">
+      <span class="leg"><span class="swatch green"></span> Open slot — move here</span>
+      <span class="leg"><span class="swatch amber"></span> Swap — trade places</span>
+      <span class="leg">🔒 Locked · <span class="sess-badge auto">Auto</span> Auto-grouped</span>
+    </div>
+    ${printOptionsHtml()}
+    <div class="row ${printOpts.grades ? '' : 'no-print'}">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+  if (printOpts.coverage) {
+    html += `<div class="print-only card"><h3>Coverage</h3><table><thead><tr><th>Student</th><th>Required</th><th>Placed</th><th>Status</th></tr></thead><tbody>` +
+      rev.map(r => `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${esc(r.status)}</td></tr>`).join('') +
+      `</tbody></table></div>`;
+  }
+  html += `<div class="week-layout${altFor != null ? ' drawer-open' : ''}"><div class="week-main">`;
+  html += '<div class="week-cals">';
+  cal.weekPairs.forEach(pair => {
+    pair.forEach(week => {
+      const label = cal.hasSpecificWeeks ? ('Week ' + week) : 'Weekly';
+      html += `<div class="card cal"><h3>${esc(label)}</h3>${renderWeekGrid(cal, week)}</div>`;
+    });
+  });
+  html += '</div></div>' + sessionPopoverHtml() + '</div>';
+  return html;
+}
+
+function renderWeekGrid(cal, week) {
+  const weekLabel = cal.hasSpecificWeeks ? ('Week ' + week) : 'Every Week';
+  const inc = cal.inc, start = cal.minStart, rows = cal.rowsCount;
+  const cells = {};
+  const selected = altFor != null ? state.scheduleLog[altFor] : null;
+  let selectedStart = null;
+  if (selected) { try { selectedStart = timeStrToMinutes(selected.start); } catch (e) {} }
+
+  DAYS.forEach(d => { cells[d] = Array.from({ length: rows }, () => null); });
+  cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
+    const r0 = Math.max(0, Math.round((e.start - start) / inc));
+    const r1 = Math.min(rows, Math.max(r0 + 1, Math.round((e.end - start) / inc)));
+    const color = cal.gradeColors[e.grade] || { bg: '#444', text: '#fff' };
+    const text = formatSessionCell(e, printOpts);
+    if (cells[e.day]) cells[e.day][r0] = {
+      span: Math.max(1, r1 - r0), text, color, day: e.day, start: e.start,
+      studentId: (e.studentIds && e.studentIds[0]) || '',
+      groupId: e.groupId || ''
+    };
+    for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
+  });
+  let html = '<div class="cal-grid' + (compactCalendar ? ' compact-cal' : '') + '" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
+  html += '<div class="cal-head">Time</div>' + DAYS.map(d => '<div class="cal-head">' + d + '</div>').join('');
+  for (let r = 0; r < rows; r++) {
+    const slotStart = start + r * inc;
+    html += '<div>' + esc(minutesToTimeStr(slotStart)) + '</div>';
+    DAYS.forEach(d => {
+      const c = cells[d][r];
+      if (c === 'skip') return;
+      const spanMins = c ? c.span * inc : inc;
+      const cellStart = c ? c.start : slotStart;
+      const ok = dragState && candidateForSlot(d, cellStart, weekLabel, spanMins) ? ' drop-ok' : '';
+      if (!c) {
+        html += `<div class="cal-slot${ok}" data-day="${d}" data-start="${slotStart}" data-span="${inc}" data-week="${esc(weekLabel)}"></div>`;
+        return;
+      }
+      const isSel = selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId);
+      const logIdx = (state.scheduleLog || []).findIndex(row => {
+        try {
+          return row.day === c.day && timeStrToMinutes(row.start) === c.start && String(row.studentId) === String(c.studentId);
+        } catch (e) { return false; }
+      });
+      const locked = logIdx >= 0 && String(state.scheduleLog[logIdx].locked).toLowerCase() === 'yes';
+      const autoGroup = c.groupId && String(c.groupId).indexOf('AUTO-GROUP-') === 0;
+      const badges = (locked ? '<span class="sess-badge lock" title="Locked">🔒</span>' : '') +
+        (autoGroup ? '<span class="sess-badge auto">Auto</span>' : '');
+      html += `<div class="cal-slot${ok}" style="grid-row: span ${c.span}" data-day="${d}" data-start="${c.start}" data-span="${spanMins}" data-week="${esc(weekLabel)}">
+        <div class="sess${isSel ? ' on' : ''}${locked ? ' locked-drag' : ''}"
+          draggable="${locked ? 'false' : 'true'}"
+          data-log-index="${logIdx}"
+          title="${locked ? 'Unlock to drag — click to edit' : 'Drag to a green cell, or click to edit'}"
+          onclick="onSessionClick('${esc(c.day)}',${c.start},'${esc(c.studentId)}')"
+          style="background:${c.color.bg};color:${c.color.text}">${badges}${c.text}</div>
+      </div>`;
+    });
+  }
+  return html + '</div>';
+}
+
+function onSessionClick(day, startMins, studentId) {
+  if (suppressSessionClick) { suppressSessionClick = false; return; }
+  openCalendarSession(day, startMins, studentId);
+}
+
+function weekKeyFromLabel(weekLabel) {
+  if (!weekLabel || weekLabel === 'Every Week') return ALL_WEEKS_KEY;
+  const n = Number(String(weekLabel).replace(/[^0-9]/g, ''));
+  return Number.isFinite(n) ? n : ALL_WEEKS_KEY;
+}
+
+/** Match a calendar cell to the best valid candidate (grid rows are coarser than slotIncrement). */
+function candidateForSlot(day, startMins, weekLabel, spanMins) {
+  if (!dragState || !dragState.candidates || !dragState.candidates.length) return null;
+  const start = Number(startMins);
+  const span = Number(spanMins) || 15;
+  const week = weekKeyFromLabel(weekLabel);
+  const pool = dragState.candidates.filter(c => {
+    if (c.day !== day) return false;
+    const cw = c.week;
+    if (week === ALL_WEEKS_KEY || week === 'ALL') {
+      if (cw !== ALL_WEEKS_KEY && cw !== 'ALL' && cw != null && cw !== ANY_WEEK_KEY) return false;
+    } else if (Number(cw) !== Number(week) && cw !== ALL_WEEKS_KEY && cw !== 'ALL') {
+      return false;
+    }
+    return c.start >= start && c.start < start + span;
+  });
+  if (!pool.length) return null;
+  pool.sort((a, b) => Math.abs(a.start - start) - Math.abs(b.start - start));
+  return pool[0];
+}
+
+function moveSessionToCandidate(logIndex, candidate) {
+  const row = state.scheduleLog[logIndex];
+  if (!row || !candidate) return false;
+  const dur = timeStrToMinutes(row.end) - timeStrToMinutes(row.start);
+  const mates = sessionMateRows(state.scheduleLog, row);
+  mates.forEach(r => {
+    r.day = candidate.day;
+    r.start = minutesToTimeStr(candidate.start);
+    r.end = minutesToTimeStr(candidate.start + dur);
+    r.duration = dur;
+    if (candidate.week && candidate.week !== ALL_WEEKS_KEY && candidate.week !== 'ALL') {
+      r.week = 'Week ' + candidate.week;
+    }
+  });
+  return true;
+}
+
+function swapSessionsByIndex(indexA, indexB) {
+  const a = state.scheduleLog[indexA];
+  const b = state.scheduleLog[indexB];
+  if (!a || !b) return false;
+  const aMates = sessionMateRows(state.scheduleLog, a);
+  const bMates = sessionMateRows(state.scheduleLog, b);
+  const aWhen = { day: a.day, start: a.start, end: a.end, week: a.week };
+  const bWhen = { day: b.day, start: b.start, end: b.end, week: b.week };
+  let aDur, bDur, aStartMin, bStartMin;
+  try {
+    aDur = timeStrToMinutes(a.end) - timeStrToMinutes(a.start);
+    bDur = timeStrToMinutes(b.end) - timeStrToMinutes(b.start);
+    aStartMin = timeStrToMinutes(aWhen.start);
+    bStartMin = timeStrToMinutes(bWhen.start);
+  } catch (e) { return false; }
+  aMates.forEach(r => {
+    r.day = bWhen.day;
+    r.start = bWhen.start;
+    r.end = minutesToTimeStr(bStartMin + aDur);
+    r.duration = aDur;
+    r.week = bWhen.week;
+  });
+  bMates.forEach(r => {
+    r.day = aWhen.day;
+    r.start = aWhen.start;
+    r.end = minutesToTimeStr(aStartMin + bDur);
+    r.duration = bDur;
+    r.week = aWhen.week;
+  });
+  return true;
+}
+
+function applyAlt(n) {
+  if (altFor == null) return;
+  const found = findAlternativeSlots(engineInput(), state.scheduleLog[altFor]);
+  const c = found.candidates[n];
+  if (!c) return;
+  beginEdit('Move session');
+  moveSessionToCandidate(altFor, c);
+  refreshLiveReview('Moved session (whole group).');
+  altFor = null;
+  dragState = null;
+  render();
+}
+
+function applySwap(n) {
+  if (altFor == null) return;
+  const found = findSwapCandidates(engineInput(), state.scheduleLog[altFor]);
+  const s = found.swaps && found.swaps[n];
+  if (!s) return;
+  const aName = state.scheduleLog[altFor].name;
+  beginEdit('Swap sessions');
+  if (!swapSessionsByIndex(altFor, s.otherIndex)) {
+    editUndoStack.pop();
+    updateEditUndoButtons();
+    setStatus('Could not swap those sessions.', 'bad');
+    return;
+  }
+  refreshLiveReview('Swapped ' + aName + ' ↔ ' + s.otherLabel + '.');
+  altFor = null;
+  dragState = null;
+  render();
+}
+
+function clearDropHighlights() {
+  document.querySelectorAll('.cal-slot.drop-ok, .cal-slot.swap-ok, .cal-slot.drop-hover').forEach(el => {
+    el.classList.remove('drop-ok', 'swap-ok', 'drop-hover');
+  });
+  document.querySelectorAll('.cal-grid.dnd-active').forEach(g => g.classList.remove('dnd-active'));
+}
+
+function endDragVisual() {
+  clearDropHighlights();
+  document.querySelectorAll('.sess.dragging').forEach(el => el.classList.remove('dragging'));
+}
+
+function swapForOccupiedSlot(slot) {
+  if (!dragState || !dragState.swaps || !dragState.swaps.length) return null;
+  const sess = slot.querySelector('.sess');
+  if (!sess) return null;
+  const idx = Number(sess.getAttribute('data-log-index'));
+  if (!Number.isFinite(idx) || !state.scheduleLog[idx]) return null;
+  const key = sessionKeyFromLogRow(state.scheduleLog[idx]);
+  return dragState.swaps.find(s => s.otherKey === key) || null;
+}
+
+function paintDropTargets() {
+  clearDropHighlights();
+  if (!dragState) return;
+  document.querySelectorAll('.cal-grid').forEach(g => g.classList.add('dnd-active'));
+  document.querySelectorAll('.cal-slot').forEach(slot => {
+    const day = slot.getAttribute('data-day');
+    const start = slot.getAttribute('data-start');
+    const week = slot.getAttribute('data-week');
+    const span = slot.getAttribute('data-span');
+    if (candidateForSlot(day, start, week, span)) {
+      slot.classList.add('drop-ok');
+    }
+    if (swapForOccupiedSlot(slot)) {
+      slot.classList.add('swap-ok');
+    }
+  });
+}
+
+function bindCalendarDnD() {
+  if (!document.querySelector('.cal-grid')) return;
+
+  document.querySelectorAll('.sess[draggable="true"]').forEach(el => {
+    if (el.dataset.dndBound === '1') return;
+    el.dataset.dndBound = '1';
+    el.addEventListener('dragstart', (e) => {
+      const idx = Number(el.getAttribute('data-log-index'));
+      if (!Number.isFinite(idx) || idx < 0 || !state.scheduleLog[idx]) {
+        e.preventDefault();
+        return;
+      }
+      const row = state.scheduleLog[idx];
+      if (String(row.locked).toLowerCase() === 'yes') {
+        e.preventDefault();
+        setStatus('Unlock this session before dragging.', 'bad');
+        return;
+      }
+      const found = findAlternativeSlots(engineInput(), row);
+      const swapsFound = findSwapCandidates(engineInput(), row);
+      if (found.error && !(swapsFound.swaps || []).length) {
+        e.preventDefault();
+        setStatus(found.error, 'bad');
+        return;
+      }
+      const cands = found.candidates || [];
+      const swaps = swapsFound.swaps || [];
+      if (!cands.length && !swaps.length) {
+        e.preventDefault();
+        setStatus('No open slots or valid swaps for this group right now.', 'bad');
+        return;
+      }
+      dragState = { index: idx, candidates: cands, swaps: swaps };
+      el.classList.add('dragging');
+      suppressSessionClick = true;
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(idx)); } catch (err) {}
+      paintDropTargets();
+      const msg = swaps.length
+        ? ('Drop on green to move, or amber to swap (' + swaps.length + ' available). Escape cancels.')
+        : 'Drop on a green cell to move this group. Escape cancels.';
+      setStatus(msg, 'ok');
+    });
+    el.addEventListener('dragend', () => {
+      dragState = null;
+      endDragVisual();
+      setTimeout(() => { suppressSessionClick = false; }, 80);
+    });
+  });
+
+  document.querySelectorAll('.cal-slot').forEach(slot => {
+    if (slot.dataset.dndBound === '1') return;
+    slot.dataset.dndBound = '1';
+    slot.addEventListener('dragover', (e) => {
+      if (!dragState) return;
+      const day = slot.getAttribute('data-day');
+      const start = slot.getAttribute('data-start');
+      const week = slot.getAttribute('data-week');
+      const span = slot.getAttribute('data-span');
+      const cand = candidateForSlot(day, start, week, span);
+      const swap = swapForOccupiedSlot(slot);
+      if (!cand && !swap) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      slot.classList.add('drop-hover');
+    });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drop-hover'));
+    slot.addEventListener('drop', (e) => {
+      if (!dragState) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const day = slot.getAttribute('data-day');
+      const start = slot.getAttribute('data-start');
+      const week = slot.getAttribute('data-week');
+      const span = slot.getAttribute('data-span');
+      const swap = swapForOccupiedSlot(slot);
+      const cand = candidateForSlot(day, start, week, span);
+      const idx = dragState.index;
+      const studentId = state.scheduleLog[idx] && state.scheduleLog[idx].studentId;
+      const aName = state.scheduleLog[idx] && state.scheduleLog[idx].name;
+      dragState = null;
+      endDragVisual();
+      if (swap) {
+        beginEdit('Swap on calendar');
+        if (!swapSessionsByIndex(idx, swap.otherIndex)) {
+          editUndoStack.pop();
+          updateEditUndoButtons();
+          setStatus('That swap is not valid.', 'bad');
+          return;
+        }
+        altFor = null;
+        refreshLiveReview('Swapped ' + aName + ' ↔ ' + swap.otherLabel + '.');
+        suppressSessionClick = true;
+        render();
+        setTimeout(() => { suppressSessionClick = false; }, 80);
+        return;
+      }
+      if (!cand) {
+        setStatus('That slot is not valid for this group.', 'bad');
+        return;
+      }
+      beginEdit('Move on calendar');
+      moveSessionToCandidate(idx, cand);
+      altFor = state.scheduleLog.findIndex(r =>
+        String(r.studentId) === String(studentId) && r.day === cand.day &&
+        (() => { try { return timeStrToMinutes(r.start) === cand.start; } catch (err) { return false; } })()
+      );
+      if (altFor < 0) altFor = null;
+      refreshLiveReview('Moved on the calendar.');
+      suppressSessionClick = true;
+      render();
+      setTimeout(() => { suppressSessionClick = false; }, 80);
+    });
+  });
+}
+
+function openCalendarSession(day, startMins, studentId) {
+  const i = (state.scheduleLog || []).findIndex(r => {
+    try { return r.day === day && timeStrToMinutes(r.start) === startMins && String(r.studentId) === String(studentId); }
+    catch (e) { return false; }
+  });
+  if (i < 0) { setStatus('Could not find that session.', 'bad'); return; }
+  altFor = i;
+  scheduleTab = 'week';
+  showView('schedule');
+}
+
+function renderReviewBody() {
+  const rows = reviewRows();
+  if (!rows.length) return '<p class="lede">Generate a schedule to see required vs placed minutes.</p>';
+  const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  const hasCal = (state.scheduleLog || []).length > 0;
+  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes. Use <b>Calendar</b> to jump to a session on the week view.</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th>${hasCal ? '<th></th>' : ''}</tr></thead><tbody>`;
+  rows.forEach(r => {
+    const onCal = hasCal && (state.scheduleLog || []).some(row => String(row.studentId) === String(r.id));
+    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td>${hasCal ? `<td>${onCal ? `<button type="button" class="ghost" onclick="jumpToStudentSession('${esc(r.id)}')">Calendar</button>` : '<span class="meta">—</span>'}</td>` : ''}</tr>`;
+  });
+  return html + '</tbody></table>';
+}
+
+function toggleLock(i) {
+  const row = state.scheduleLog[i];
+  if (!row) return;
+  beginEdit('Toggle lock');
+  const on = String(row.locked).toLowerCase() === 'yes';
+  const mates = sessionMateRows(state.scheduleLog, row);
+  mates.forEach(r => { r.locked = on ? '' : 'Yes'; });
+  refreshLiveReview(on ? 'Unlocked session.' : 'Locked session.');
+  render();
+}
+
+function clearScheduleKeepLocks() {
+  state.scheduleLog = (state.scheduleLog || []).filter(r => String(r.locked).toLowerCase() === 'yes');
+  persist(); setStatus('Cleared unlocked sessions.', 'ok'); render();
+}
+function clearLocks() {
+  (state.scheduleLog || []).forEach(r => { r.locked = ''; });
+  persist(); setStatus('Locks cleared.', 'ok'); render();
+}
+
+function renderSessionsBody() {
+  const rows = state.scheduleLog || [];
+  let html = `<p class="lede">Lock a row to keep it on the next generate. Find other times without reshuffling everyone.</p>
+    <div class="row no-print">
+      <button onclick="clearScheduleKeepLocks()">Clear unlocked</button>
+      <button onclick="clearLocks()">Clear all locks</button>
+      <button onclick="exportCsv('schedule')">CSV</button>
+    </div>`;
+  if (!rows.length) return html + '<p class="lede">No sessions yet.</p>';
+  html += '<table><thead><tr><th></th><th>Student</th><th>When</th><th>Group</th><th>Teacher</th><th></th></tr></thead><tbody>';
+  rows.forEach((r, i) => {
+    const auto = String(r.groupId).indexOf('AUTO-GROUP-') === 0;
+    const locked = String(r.locked).toLowerCase() === 'yes';
+    html += `<tr class="${auto ? 'auto' : ''}">
+      <td><button onclick="toggleLock(${i})">${locked ? 'Locked' : 'Lock'}</button></td>
+      <td>${esc(r.name)}<div class="meta">${esc(r.studentId)} · Gr ${esc(r.grade)}</div></td>
+      <td>${esc(r.week)} ${esc(r.day)} ${esc(r.start)}–${esc(r.end)} <span class="meta">${esc(r.duration)} min</span></td>
+      <td>${esc(r.groupId)}</td><td>${esc(r.teacher)}</td>
+      <td><button class="ghost" onclick="openAlts(${i})">Other times</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  if (altFor != null) html += renderAlts();
+  return html;
+}
+
+function openAlts(i) { altFor = i; scheduleTab = 'sessions'; render(); }
+
+function renderAlts() {
+  const row = state.scheduleLog[altFor];
+  const found = findAlternativeSlots(engineInput(), row);
+  const swapsFound = findSwapCandidates(engineInput(), row);
+  if (found.error && !(swapsFound.swaps || []).length) return `<div class="card">${esc(found.error)}</div>`;
+  let html = `<div class="card"><h3>Other times for ${esc(row.name)}</h3><p class="meta">Open slots that fit current locks and blackouts. Group members move together.</p><div class="chip-row">`;
+  (found.candidates || []).forEach((c, n) => {
+    html += `<button class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
+  });
+  if (!(found.candidates || []).length) html += '<span class="meta">No open slots — try a swap.</span>';
+  html += `</div><h3 style="margin-top:14px">Swap with…</h3><p class="meta">Trade places when the calendar is full. Both groups must fit each other’s time.</p><div class="chip-row">`;
+  (swapsFound.swaps || []).forEach((s, n) => {
+    html += `<button class="chip swap" onclick="applySwap(${n})">↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}–${esc(minutesToTimeStr(s.otherEnd))}</button>`;
+  });
+  if (!(swapsFound.swaps || []).length) html += '<span class="meta">No valid swaps.</span>';
+  return html + '</div><button class="ghost" onclick="altFor=null;render()">Close</button></div>';
+}
+
+function renderOpenBody() {
+  const data = computeOpenSlots(engineInput());
+  if (data.error) return `<p class="lede">${esc(data.error)}</p>`;
+  let html = `<p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
+  html += '<div class="open-grids">';
+  data.blocks.forEach(b => {
+    html += `<div class="card"><h3>Grade ${esc(b.grade)}${data.hasAlternating ? ' · pattern ' + b.pattern : ''} <span class="meta">${b.openMinutes} open min / week</span></h3>
+      <table class="heat"><thead><tr><th>Time</th>${DAYS.map(d => '<th>'+d+'</th>').join('')}</tr></thead><tbody>`;
+    b.cells.forEach(row => {
+      html += `<tr><td>${esc(row.timeLabel)}</td>` + DAYS.map(d => {
+        const cell = row.days[d];
+        return `<td class="${cell.kind}">${esc(cell.label)}</td>`;
+      }).join('') + '</tr>';
+    });
+    html += '</tbody></table></div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderStudents() {
+  const list = state.students.filter(s => !studentQuery || JSON.stringify(s).toLowerCase().includes(studentQuery.toLowerCase()));
+  return `<h1>Students</h1>
+    <p class="lede">Caseload lives here. OT / resource times sit on each student — not a separate screen.</p>
+    ${wizardHtml()}
+    ${staleBanner()}
+    <div class="row">
+      <input id="q" placeholder="Search name, grade, teacher…" style="max-width:260px" value="${esc(studentQuery)}" oninput="studentQuery=this.value;refreshStudentCards()">
+      <button class="primary" onclick="openStudentForm()">Add student</button>
+      <button onclick="exportCsv('students')">CSV</button>
+    </div>
+    <div class="cards" id="student-cards">${studentCardsHtml(list)}</div>`;
+}
+
+function refreshStudentCards() {
+  const el = document.getElementById('student-cards');
+  if (!el) return;
+  const list = state.students.filter(s => !studentQuery || JSON.stringify(s).toLowerCase().includes(studentQuery.toLowerCase()));
+  el.innerHTML = studentCardsHtml(list);
+}
+
+function studentCardsHtml(list) {
+  if (!list.length) return (!state.students.length) ? '<p class="lede">No students yet. Add one, or load the sample caseload from the steps above.</p>' : '<p class="lede">No students match.</p>';
+  return list.map(s => {
+    const idx = state.students.indexOf(s);
+    const cov = coverageFor(s.id);
+    const blocks = blocksFor(s.id);
+    const covPill = cov ? `<span class="pill ${cov.status === 'Under' ? 'bad' : 'ok'}">${esc(cov.status)} · ${cov.pct}%</span>` : '';
+    const blockBits = blocks.length
+      ? blocks.map(b => `${esc(b.reason || 'Blocked')} ${esc(b.day)} ${esc(b.start)}–${esc(b.end)}`).join('<br>')
+      : '<span class="meta">No extra blocks — grade lunch/specials still apply</span>';
+    return `<div class="card student" onclick="openStudentForm(${idx})">
+      <h3>${esc(s.lastName)}, ${esc(s.firstName)} <span class="pill">${esc(s.status || 'Active')}</span> ${covPill}</h3>
+      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${((s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : [])).map(g => ' · ' + esc(g)).join('')}${s.noGroup ? ' · <span class="pill warn">No Group</span>' : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+      <div class="meta" style="margin-top:8px">${blockBits}</div>
+      <div class="row" style="margin:10px 0 0">
+        <button onclick="event.stopPropagation();openStudentForm(${idx})">Edit</button>
+        ${(state.scheduleLog || []).some(row => String(row.studentId) === String(s.id)) ? `<button onclick="event.stopPropagation();jumpToStudentSession('${esc(s.id)}')">On calendar</button>` : ''}
+        <button onclick="event.stopPropagation();duplicateStudent(${idx})">Duplicate</button>
+        <button class="ghost danger" onclick="event.stopPropagation();removeStudent(${idx})">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function removeStudent(idx) {
+  const s = state.students[idx];
+  if (!s) return;
+  if (!confirm('Remove ' + s.firstName + ' ' + s.lastName + '? Their unavailable times will be deleted too.')) return;
+  const id = s.id;
+  state.students.splice(idx, 1);
+  state.constraints = state.constraints.filter(c => c.studentId !== id);
+  persistCaseload();
+  render();
+}
+
+function duplicateStudent(idx) {
+  const src = state.students[idx];
+  if (!src) return;
+  const copy = Object.assign({}, src, { id: suggestId(src) });
+  state.students.splice(idx + 1, 0, copy);
+  blocksFor(src.id).forEach(b => state.constraints.push(Object.assign({}, b, { studentId: copy.id })));
+  persistCaseload();
+  render();
+  openStudentForm(idx + 1);
+}
+
+function gradeOptions(selected) {
+  const grades = knownGrades();
+  if (selected && grades.indexOf(selected) < 0) grades.push(selected);
+  return grades.map(g => `<option value="${esc(g)}" ${g === selected ? 'selected' : ''}>${esc(g)}</option>`).join('');
+}
+function groupOptions(selected) {
+  const groups = knownGroups();
+  let html = '<option value="">Choose a group</option>';
+  groups.forEach(g => { html += `<option value="${esc(g)}" ${g === selected ? 'selected' : ''}>${esc(g)}</option>`; });
+  html += '<option value="__new__">New group…</option>';
+  return html;
+}
+
+function openStudentForm(idx) {
+  const isNew = idx == null;
+  const s = isNew
+    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', groupIds: [], noGroup: false, frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
+    : Object.assign({}, state.students[idx]);
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-bg';
+  wrap.innerHTML = `<div class="modal">
+    <h2 style="margin-top:0">${isNew ? 'Add student' : esc(s.lastName) + ', ' + esc(s.firstName)}</h2>
+    <div class="form-grid">
+      <div><label>First name</label><input id="f-first" value="${esc(s.firstName)}"></div>
+      <div><label>Last name</label><input id="f-last" value="${esc(s.lastName)}"></div>
+      <div><label>Grade</label><select id="f-grade">${gradeOptions(s.grade)}<option value="__new__">Other grade…</option></select><input id="f-grade-new" class="hidden" placeholder="e.g. 4"></div>
+      <div><label>Teacher / room</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
+      <div><label>Service</label><select id="f-service"><option>Individual</option><option>Group</option></select></div>
+      <div id="group-fields"><label>Group ID(s)</label><select id="f-gid-pick">${groupOptions((s.groupIds && s.groupIds[0]) || s.groupId)}</select><input id="f-gid" class="${(((s.groupIds && s.groupIds[0]) || s.groupId) && knownGroups().indexOf(((s.groupIds && s.groupIds[0]) || s.groupId)) < 0) ? '' : 'hidden'}" placeholder="e.g. G1, G2" value="${esc((s.groupIds && s.groupIds.length) ? s.groupIds.join(', ') : (s.groupId || ''))}"><p class="meta">Comma-separate multiple groups when this student belongs to more than one.</p></div>
+      <div id="no-group-fields"><label>Auto-grouping</label><label style="font-weight:500;display:flex;align-items:center;gap:8px;margin:0"><input id="f-nogroup" type="checkbox" style="width:auto" ${s.noGroup ? 'checked' : ''}> No Group — never join an auto-group</label></div>
+      <div><label>Frequency</label><select id="f-freq"><option>Weekly</option><option>Quarterly</option></select></div>
+      <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
+    </div>
+    <div id="weekly-fields" class="form-grid">
+      <div><label>Minutes / week</label><input id="f-min" type="number" min="0" value="${esc(s.minutesPerWeek)}"></div>
+      <div><label>Preferred session length</label><input id="f-pref" type="number" min="0" placeholder="optional" value="${esc(s.preferredSessionLength)}"></div>
+    </div>
+    <div id="quarterly-fields" class="form-grid hidden">
+      <div><label>Sessions / quarter</label><input id="f-sq" type="number" min="0" value="${esc(s.sessionsPerQuarter)}"></div>
+      <div><label>Session length</label><input id="f-ql" type="number" min="0" value="${esc(s.quarterlySessionLength)}"></div>
+    </div>
+    <div class="form-grid">
+      <div><label>Pin to day (optional)</label><select id="f-fd"><option value=""></option>${DAYS.map(d=>'<option>'+d+'</option>').join('')}</select></div>
+      <div><label>Pin start (optional)</label><input id="f-fs" type="time" step="300" value="${esc(toTimeInput(s.fixedStart))}"></div>
+    </div>
+    <details style="margin-top:10px"><summary class="meta">Student ID</summary>
+      <input id="f-id" value="${esc(s.id)}" placeholder="Auto-filled from name if blank">
+    </details>
+    <label>Notes</label><textarea id="f-notes" rows="2">${esc(s.notes)}</textarea>
+    <div class="modal-sec">
+      <h3>Unavailable times</h3>
+      <p class="meta">OT, resource room, or anything besides this student’s grade lunch/specials.</p>
+      <div id="block-editor">${isNew ? '<p class="meta">Save the student first, then add blocks here.</p>' : blockEditorHtml(s.id)}</div>
+      ${isNew ? '' : '<div class="row" style="margin-top:8px"><button type="button" id="f-add-block">Add unavailable time</button></div>'}
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="f-save">Save student</button>
+      <button id="f-cancel">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#f-status').value = s.status || 'Active';
+  wrap.querySelector('#f-service').value = s.serviceType || 'Individual';
+  wrap.querySelector('#f-freq').value = s.frequencyType || 'Weekly';
+  wrap.querySelector('#f-fd').value = s.fixedDay || '';
+  const sync = () => {
+    const service = wrap.querySelector('#f-service').value;
+    const freq = wrap.querySelector('#f-freq').value;
+    const noGroupEl = wrap.querySelector('#f-nogroup');
+    wrap.querySelector('#weekly-fields').classList.toggle('hidden', freq !== 'Weekly');
+    wrap.querySelector('#quarterly-fields').classList.toggle('hidden', freq !== 'Quarterly');
+    wrap.querySelector('#group-fields').classList.toggle('hidden', service !== 'Group');
+    wrap.querySelector('#no-group-fields').classList.toggle('hidden', service !== 'Individual');
+    if (service === 'Group') {
+      const gid = wrap.querySelector('#f-gid');
+      if (gid) gid.classList.remove('hidden');
+      if (noGroupEl) noGroupEl.checked = false;
+    }
+  };
+  wrap.querySelector('#f-service').onchange = sync;
+  wrap.querySelector('#f-freq').onchange = sync;
+  wrap.querySelector('#f-nogroup').onchange = () => {
+    if (wrap.querySelector('#f-nogroup').checked) {
+      wrap.querySelector('#f-service').value = 'Individual';
+      wrap.querySelector('#f-gid-pick').value = '';
+      wrap.querySelector('#f-gid').value = '';
+      wrap.querySelector('#f-gid').classList.add('hidden');
+      sync();
+    }
+  };
+  wrap.querySelector('#f-grade').onchange = () => {
+    const custom = wrap.querySelector('#f-grade-new');
+    const isOther = wrap.querySelector('#f-grade').value === '__new__';
+    custom.classList.toggle('hidden', !isOther);
+    if (isOther) custom.focus();
+  };
+  wrap.querySelector('#f-gid-pick').onchange = () => {
+    const custom = wrap.querySelector('#f-gid');
+    const pick = wrap.querySelector('#f-gid-pick').value;
+    const isNewGroup = pick === '__new__';
+    custom.classList.remove('hidden');
+    if (isNewGroup) { custom.value = ''; custom.focus(); }
+    else if (pick) {
+      const cur = parseGroupIds(custom.value);
+      if (cur.indexOf(pick) < 0) cur.push(pick);
+      custom.value = cur.join(', ');
+    }
+  };
+  sync();
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
+  wrap.querySelector('#f-cancel').onclick = () => wrap.remove();
+  const addBtn = wrap.querySelector('#f-add-block');
+  if (addBtn) addBtn.onclick = () => addBlockFor(s.id);
+  wrap.querySelector('#f-save').onclick = () => {
+    const gradePick = wrap.querySelector('#f-grade').value;
+    const groupPick = wrap.querySelector('#f-gid-pick').value;
+    const gidCustom = wrap.querySelector('#f-gid');
+    const next = {
+      id: wrap.querySelector('#f-id').value.trim(),
+      firstName: wrap.querySelector('#f-first').value.trim(),
+      lastName: wrap.querySelector('#f-last').value.trim(),
+      grade: gradePick === '__new__' ? wrap.querySelector('#f-grade-new').value.trim() : gradePick,
+      teacher: wrap.querySelector('#f-teacher').value.trim(),
+      serviceType: wrap.querySelector('#f-service').value,
+      groupId: '',
+      groupIds: wrap.querySelector('#f-service').value === 'Group'
+        ? parseGroupIds(groupPick === '__new__' || !gidCustom.classList.contains('hidden') ? gidCustom.value : groupPick)
+        : [],
+      noGroup: wrap.querySelector('#f-service').value === 'Individual' && wrap.querySelector('#f-nogroup').checked,
+      frequencyType: wrap.querySelector('#f-freq').value,
+      minutesPerWeek: wrap.querySelector('#f-min').value,
+      preferredSessionLength: wrap.querySelector('#f-pref').value,
+      sessionsPerQuarter: wrap.querySelector('#f-sq').value,
+      quarterlySessionLength: wrap.querySelector('#f-ql').value,
+      status: wrap.querySelector('#f-status').value,
+      notes: wrap.querySelector('#f-notes').value,
+      fixedDay: wrap.querySelector('#f-fd').value,
+      fixedStart: fromTimeInput(wrap.querySelector('#f-fs').value),
+    };
+    next.groupId = (next.groupIds && next.groupIds[0]) || '';
+    if (!next.firstName || !next.lastName) { alert('First and last name are required.'); return; }
+    if (!next.id) next.id = suggestId(next);
+    if (state.students.some((row, i) => row.id === next.id && i !== idx)) {
+      alert('That student ID is already in use.');
+      return;
+    }
+    if (idx == null) state.students.push(next);
+    else {
+      const oldId = state.students[idx].id;
+      state.students[idx] = next;
+      if (oldId !== next.id) state.constraints.forEach(c => { if (c.studentId === oldId) c.studentId = next.id; });
+    }
+    persistCaseload();
+    wrap.remove();
+    render();
+  };
+}
+
+function blockEditorHtml(studentId) {
+  const rows = state.constraints.map((c, i) => ({ c, i })).filter(x => x.c.studentId === studentId);
+  if (!rows.length) return '<p class="meta">None yet. Grade lunch and specials already apply automatically.</p>';
+  return rows.map(({ c, i }) => `<div class="block-item">
+    <div class="form-grid">
+      <div><label>Reason</label><input value="${esc(c.reason)}" onchange="state.constraints[${i}].reason=this.value;persistCaseload()"></div>
+      <div></div>
+      <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(c.start))}" onchange="state.constraints[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+      <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(c.end))}" onchange="state.constraints[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+    </div>
+    <label>Days</label>
+    <div class="chip-row">${dayChips(c.day, 'constraints', i)}</div>
+    <button class="ghost danger" onclick="removeBlock(${i}, '${esc(studentId)}')">Remove block</button>
+  </div>`).join('');
+}
+
+function refreshBlockEditor(studentId) {
+  const el = document.getElementById('block-editor');
+  if (el) el.innerHTML = blockEditorHtml(studentId);
+}
+
+function addBlockFor(studentId) {
+  state.constraints.push({ studentId: studentId, day: 'Mon', start: '9:00 AM', end: '9:30 AM', reason: 'OT' });
+  persistCaseload();
+  refreshBlockEditor(studentId);
+}
+
+function removeBlock(i, studentId) {
+  state.constraints.splice(i, 1);
+  persistCaseload();
+  refreshBlockEditor(studentId);
+}
+
+function dayChips(selected, kind, i) {
+  const set = new Set(parseDayList(selected || ''));
+  return DAYS.map(d => `<button type="button" class="chip ${set.has(d) ? 'on' : ''}" data-day="${d}" onclick="toggleDay(this,'${kind}',${i})">${d}</button>`).join('');
+}
+
+function toggleDay(btn, kind, i) {
+  btn.classList.toggle('on');
+  const days = Array.from(btn.parentElement.querySelectorAll('.chip.on')).map(b => b.dataset.day);
+  const v = days.join(', ');
+  if (kind === 'availability') state.availability[i].day = v;
+  if (kind === 'grades') state.grades[i].day = v;
+  if (kind === 'constraints') state.constraints[i].day = v;
+  persistCaseload();
+}
+
+function addWindow(kind) {
+  if (kind === 'availability') state.availability.push({ day: 'Mon-Fri', start: '8:00 AM', end: '3:00 PM', pattern: '', notes: '' });
+  if (kind === 'grades') state.grades.push({ grade: knownGrades()[0] || '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
+  persistCaseload(); render();
+}
+
+function copyWindow(kind, i) {
+  const src = kind === 'availability' ? state.availability[i] : state.grades[i];
+  if (!src) return;
+  (kind === 'availability' ? state.availability : state.grades).splice(i + 1, 0, Object.assign({}, src));
+  persistCaseload(); render();
+}
+
+function addLunchBlock() {
+  state.grades.push({ grade: knownGrades()[0] || '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
+  persistCaseload(); render();
+}
+
+function renderSetup() {
+  return `<h1>Hours &amp; grades</h1>
+    <p class="lede">Your working windows, plus grade-level lunch/recess/specials. Student-specific OT or resource times live on the student card.</p>
+    ${wizardHtml()}
+    ${staleBanner()}
+    <div class="setup-grid">
+      <div class="setup-col">
+        <h2>My hours</h2>
+        <p class="meta">When you can see students. Leave pattern blank for every week; A/B for alternating.</p>
+        <div class="row"><button class="primary" onclick="addWindow('availability')">Add window</button><button onclick="exportCsv('availability')">CSV</button></div>
+        ${`<div class="stack">` + (state.availability.map((w, i) => `<div class="card"><div class="form-grid">
+          <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'availability', i)}</div></div>
+          <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persistCaseload()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(w.start))}" onchange="state.availability[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(w.end))}" onchange="state.availability[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+        </div>
+        <div class="field"><label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persistCaseload()"></div>
+        <div class="card-actions">
+          <button onclick="copyWindow('availability',${i})">Duplicate</button>
+          <button class="ghost danger" onclick="state.availability.splice(${i},1);persistCaseload();render()">Remove</button>
+        </div></div>`).join('') || '<p class="meta">No hours yet — add a window for the days you work.</p>') + `</div>`}
+      </div>
+      <div class="setup-col">
+        <h2>Grade blocks</h2>
+        <p class="meta">Inherited by every student in that grade. Use a student card for one-off conflicts.</p>
+        <div class="row"><button class="primary" onclick="addWindow('grades')">Add block</button><button onclick="addLunchBlock()">Add lunch</button><button onclick="exportCsv('grades')">CSV</button></div>
+        ${`<div class="stack">` + (state.grades.map((g, i) => `<div class="card"><div class="form-grid">
+          <div><label>Grade</label><input list="grade-list" value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persistCaseload()"></div>
+          <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persistCaseload()"></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(g.start))}" onchange="state.grades[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(g.end))}" onchange="state.grades[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+        </div><div class="field"><label>Days</label><div class="chip-row">${dayChips(g.day, 'grades', i)}</div></div>
+        <div class="card-actions">
+          <button onclick="copyWindow('grades',${i})">Duplicate</button>
+          <button class="ghost danger" onclick="state.grades.splice(${i},1);persistCaseload();render()">Remove</button>
+        </div></div>`).join('') || '<p class="meta">No grade blocks yet — start with lunch for each grade you serve.</p>') + `</div>`}
+        <datalist id="grade-list">${knownGrades().map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+      </div>
+    </div>`;
+}
+
+function renderFiles() {
+  return `<h1>Import / export</h1>
+    <p class="lede">Workspace auto-saves in this browser. Import a full Google Sheet export (.xlsx), multiple tab CSVs, workspace JSON, or a single CSV table. Apps Script column labels (Students, MyAvailability, Schedule_Log, …) are recognized automatically.</p>
+    <div class="drop" id="drop">Drop <b>.xlsx</b> workbook, <b>.json</b>, or <b>.csv</b> (one or many) — or <button onclick="pickFile()">choose files</button></div>
+    <div class="row">
+      <label style="margin:0;font-weight:600">CSV import</label>
+      <select style="width:auto" onchange="csvImportMode=this.value">
+        <option value="replace" ${csvImportMode==='replace'?'selected':''}>Replace this table</option>
+        <option value="merge" ${csvImportMode==='merge'?'selected':''}>Merge (match students by ID)</option>
+      </select>
+    </div>
+    <div class="card"><h3>From Google Sheets</h3>
+      <p class="meta">In your Apps Script workbook: <b>File → Download → Microsoft Excel (.xlsx)</b>, then drop that file here. Input tabs imported: Students, Grades, Constraints, MyAvailability, Settings, Schedule_Log (if present). Output-only tabs (Review, Open_Slots, Printable) are skipped.</p>
+      <p class="meta">Or export each input tab as CSV (use the tab name in the filename) and drop all CSVs at once.</p>
+    </div>
+    <div class="row">
+      <button class="primary" onclick="exportWorkspace()">Download workspace.json</button>
+      <button onclick="exportCsv('students')">students.csv</button>
+      <button onclick="exportCsv('availability')">hours.csv</button>
+      <button onclick="exportCsv('grades')">grades.csv</button>
+      <button onclick="exportCsv('constraints')">blocks.csv</button>
+      <button onclick="exportCsv('schedule')">schedule.csv</button>
+    </div>
+    <div class="row">
+      <button onclick="state=sampleWorkspace();caseloadDirty=false;persist();render();setStatus('Sample caseload loaded.','ok')">Reset to sample</button>
+      <button onclick="if(confirm('Clear the whole workspace?')){state=blankWorkspace();caseloadDirty=false;persist();render();setStatus('Cleared.','ok')}">Start empty</button>
+    </div>
+    <div class="card"><h3>CSV headers (web export)</h3>
+      <p class="meta"><b>students:</b> ${CSV_SCHEMAS.students.join(', ')}</p>
+      <p class="meta"><b>availability:</b> ${CSV_SCHEMAS.availability.join(', ')}</p>
+      <p class="meta"><b>grades:</b> ${CSV_SCHEMAS.grades.join(', ')}</p>
+      <p class="meta"><b>constraints:</b> ${CSV_SCHEMAS.constraints.join(', ')}</p>
+      <p class="meta"><b>schedule:</b> ${CSV_SCHEMAS.schedule.join(', ')}</p>
+      <p class="meta">Imports also accept Apps Script header text (e.g. <i>Student ID</i>, <i>Minutes/Week Required (Weekly only)</i>).</p>
+    </div>`;
+}
+
+function renderSettings() {
+  const s = state.settings;
+  const num = (key, label) => `<div><label>${label}</label><input type="number" value="${esc(s[key])}" onchange="state.settings.${key}=Number(this.value)||this.value;persist()"></div>`;
+  return `<h1>Settings</h1>
+    <p class="lede">Everyday knobs. Placement extras live under Advanced — they apply on the next generate.</p>
+    <div class="card form-grid">
+      ${num('minSessionLength','Min session (min)')}
+      ${num('maxSessionLength','Max session (min)')}
+      ${num('weeksPerQuarter','Weeks per quarter')}
+      <div><label>Starting week pattern</label><select onchange="state.settings.startingWeekPattern=this.value;persist()"><option ${s.startingWeekPattern==='A'?'selected':''}>A</option><option ${s.startingWeekPattern==='B'?'selected':''}>B</option></select></div>
+      <div><label>Front-load first sessions (weeks 1–2)</label><select onchange="state.settings.frontLoadFirstSessions=this.value==='true';persist()"><option value="true" ${s.frontLoadFirstSessions?'selected':''}>Yes</option><option value="false" ${!s.frontLoadFirstSessions?'selected':''}>No</option></select></div>
+      <div><label>Show teacher on outputs</label><select onchange="state.settings.showTeacherInfo=this.value==='true';persist()"><option value="true" ${s.showTeacherInfo?'selected':''}>Yes</option><option value="false" ${!s.showTeacherInfo?'selected':''}>No</option></select></div>
+    </div>
+    <details class="adv"><summary>Advanced</summary>
+      <div class="card form-grid" style="margin-top:10px">
+        ${num('slotIncrement','Slot increment (min)')}
+        ${num('groupRescueExtraMinutes','Group rescue extra minutes')}
+        ${num('maxGroupSize','Max auto-group size')}
+        <div><label>Prefer consistent weekly pattern</label><select onchange="state.settings.preferConsistentPattern=this.value==='true';persist()"><option value="true" ${s.preferConsistentPattern?'selected':''}>Yes</option><option value="false" ${!s.preferConsistentPattern?'selected':''}>No</option></select></div>
+      </div>
+    </details>`;
+}
+
+function render() {
+  const main = document.getElementById('main');
+  const map = { students: renderStudents, setup: renderSetup, schedule: renderSchedule, files: renderFiles, settings: renderSettings };
+  main.innerHTML = (map[view] || renderStudents)();
+  const drop = document.getElementById('drop');
+  if (drop) {
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('hot'); };
+    drop.ondragleave = () => drop.classList.remove('hot');
+    drop.ondrop = (e) => {
+      e.preventDefault(); drop.classList.remove('hot');
+      if (e.dataTransfer.files && e.dataTransfer.files.length) {
+        handleFileList(e.dataTransfer.files);
+        return;
+      }
+      const f = e.dataTransfer.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => importText(f.name, reader.result);
+      reader.readAsText(f);
+    };
+  }
+  const undoBtn = document.getElementById('undo-btn');
+  if (undoBtn) undoBtn.classList.toggle('hidden', !undoSnapshot);
+  updateEditUndoButtons();
+  const pop = document.getElementById('session-popover');
+  if (pop && altFor != null) pop.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  bindCalendarDnD();
+}
+
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+    e.preventDefault();
+    if (e.shiftKey) redoLastEdit();
+    else undoLastEdit();
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (dragState) { dragState = null; endDragVisual(); setStatus('Drag cancelled.', 'ok'); return; }
+    if (altFor != null) { altFor = null; render(); }
+  }
+});
+window.addEventListener('afterprint', () => {
+  if (!document.body.classList.contains('print-week')) return;
+  document.body.classList.remove('print-week');
+  render();
+});
+
+hydrate();
+render();
+
+</script>
+</body>
+</html>

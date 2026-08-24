@@ -47,7 +47,8 @@ const COLUMN_LAYOUT = {
     { width: 85, align: 'center' },  // Status
     { width: 130, align: 'left' },   // Teacher
     { width: 90, align: 'center' },  // Fixed Day
-    { width: 110, align: 'center' }  // Fixed Start Time
+    { width: 110, align: 'center' }, // Fixed Start Time
+    { width: 90, align: 'center' }   // No Group
   ],
   [SHEET_NAMES.GRADES]: [
     { width: 60, align: 'center' },  // Grade

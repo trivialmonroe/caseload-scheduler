@@ -35,6 +35,11 @@ function validateData() {
         groupMembers[groupId].push({ id: label, freq: rawFreq, minutes: r[7], preferredLen: r[8], sessionsQ: r[9], lenQ: r[10] });
       }
     }
+    const noGroupRaw = String(r[17] == null ? '' : r[17]).trim().toLowerCase();
+    const noGroup = noGroupRaw === 'yes' || noGroupRaw === 'y' || noGroupRaw === 'true' || noGroupRaw === '1';
+    if (noGroup && serviceType === 'Group') {
+      issues.push(`${label}: No Group cannot be Yes when Service Type is Group.`);
+    }
 
     const grade = String(r[3]).trim();
     if (grade && !gradesInUse[grade]) {
@@ -215,7 +220,8 @@ function submitStudentForm(data) {
     isQuarterly ? Number(data.quarterlySessionLength) : '',
     sessionsPerWeekInfo,
     data.notes || '', data.status || 'Active', data.teacher || '',
-    data.fixedDay || '', data.fixedStartTime || ''
+    data.fixedDay || '', data.fixedStartTime || '',
+    data.noGroup ? 'Yes' : ''
   ];
 
   if (existingRowIdx >= 0) {

@@ -1,13 +1,24 @@
-# Caseload Scheduler — Setup Guide
+# Caseload Scheduler
 
-A Google Sheets + Apps Script tool for building a pull-out schedule from a caseload, a provider's availability, and each grade's daily schedule. Built for school-based service providers who see students on a recurring basis and need to work around grade schedules and their own limited windows — speech-language pathologists, OTs, PTs, reading interventionists, counselors, or anyone else scheduling pull-out sessions in a school setting. Nothing about the scheduling logic is speech-specific; "Students," "sessions," and "minutes" are generic enough to fit any of these caseloads.
+A pull-out scheduler for school-based providers (SLPs, OTs, PTs, reading, counseling). Same engine, two products:
 
-## 1. Install
+| | **Web app (current direction)** | **Google Sheets** |
+|---|---|---|
+| Where | [`web/index.html`](web/index.html) | [`apps-script/`](apps-script/) |
+| Needs | A browser | A Google account + a Sheet |
+| Data | JSON workspace + CSV; saved in the browser | Spreadsheet tabs |
+| UI | Week calendar, coverage, session locks, open slots | Sheet tabs + menus |
+
+**Start here if you want the new app:** open `web/index.html` (keep `web/engine.js` beside it). Load the sample caseload, generate, export CSV or workspace JSON. Details in [`web/README.md`](web/README.md).
+
+The rest of this guide is the **Sheets** install and data model (the web app uses the same fields).
+
+## 1. Install (Google Sheets)
 1. Go to [sheets.google.com](https://sheets.google.com) and create a new blank spreadsheet. Name it something like "Caseload Scheduler."
 2. Extensions → Apps Script.
-3. Apps Script starts you with one file called `Code.gs`. Rename it: click the **⋮** menu next to it in the left sidebar → **Rename** → type `Constants` (the `.gs` is automatic). Delete its contents and paste in **Constants.gs** from this project.
-4. Click the **+** next to Files → Script, and repeat for each remaining `.gs` file in this project (`Setup.gs`, `DataHelpers.gs`, `SchedulingEngine.gs`, `Outputs.gs`, `Interactive.gs`) — name each new file to match exactly, and paste in its contents. Apps Script treats every `.gs` file in a project as one shared global scope, so it doesn't matter which file a function lives in, or what order they're created in — this split is purely to keep the codebase navigable.
-5. Click the **+** next to Files → HTML → name it exactly `StudentForm` → paste in **StudentForm.html**.
+3. Apps Script starts you with one file called `Code.gs`. Rename it: click the **⋮** menu next to it in the left sidebar → **Rename** → type `Constants` (the `.gs` is automatic). Delete its contents and paste in **apps-script/Constants.gs**.
+4. Click the **+** next to Files → Script, and repeat for each remaining `.gs` file in `apps-script/` (`Setup.gs`, `DataHelpers.gs`, `SchedulingEngine.gs`, `Outputs.gs`, `Interactive.gs`) — name each new file to match exactly, and paste in its contents. Apps Script treats every `.gs` file in a project as one shared global scope, so it doesn't matter which file a function lives in, or what order they're created in — this split is purely to keep the codebase navigable.
+5. Click the **+** next to Files → HTML → name it exactly `StudentForm` → paste in **apps-script/StudentForm.html**.
 6. Save (Ctrl/Cmd+S). Close the Apps Script tab and go back to the Sheet.
 7. Reload the spreadsheet. A new **Caseload Scheduler** menu will appear (takes a few seconds — reload again if it's not there).
 8. Caseload Scheduler → **1. Set Up Sheets (run once)**. First run will ask you to authorize the script — that's normal, it's just running under your own account.
@@ -24,7 +35,7 @@ This creates 9 tabs. You'll fill in five of them (Students, Grades, Constraints,
 | `Outputs.gs` | Everything that writes a result back: Schedule_Log, Schedule_Review, Open_Slots, Printable_Schedule |
 | `Interactive.gs` | User-triggered actions outside Generate Schedule: the sidebar form, live validation, Show Alternatives |
 | `StudentForm.html` | The "Add / Edit Student" sidebar UI |
-| `appsscript.json` | Standard Apps Script project manifest (only needed if you adopt `clasp` - see below) |
+| `apps-script/appsscript.json` | Standard Apps Script project manifest (only needed if you adopt `clasp` - see below) |
 
 ## 2. Entering days (applies to Grades, Constraints, and MyAvailability)
 The "Day" column on all three of these tabs accepts more than just a single day, so you don't have to write out five rows for something that happens every day:
@@ -153,8 +164,14 @@ It schedules the *most constrained* student/session first (the one with the fewe
 - The tool doesn't currently enforce max-gap-between-sessions rules (e.g., "no more than 10 school days between sessions" for quarterly students) — only weekly minute/session totals. Worth a manual spot-check on IEP timing compliance for quarterly students whose sessions land unevenly across the quarter.
 
 ## Development
-This project lives in git, but Apps Script itself has no native git integration — the workflow above (copy/paste into the web editor) is the zero-setup path and works fine for personal use.
 
-If you want real local-editor + git + Apps Script syncing, Google's [`clasp`](https://github.com/google/clasp) CLI is the standard tool: `npm install -g @google/clasp`, `clasp login`, `clasp clone <scriptId>` (or `clasp create` for a new project), then `clasp push`/`clasp pull` to sync this folder with the live Apps Script project. The included `appsscript.json` is clasp's expected manifest file — it's ignored by the plain copy/paste workflow, so you don't need to touch it unless you adopt clasp.
+Two code paths:
 
-Every function in every `.gs` file shares one global scope (that's how Apps Script works — no imports/exports needed between files), so the six-file split is purely organizational. Reading `SchedulingEngine.gs` end to end is the fastest way to understand the actual algorithm; everything else is setup, I/O, or user-triggered actions around it.
+- **Web app** — `web/index.html` + `web/engine.js`. Open the HTML file; no build step. Persistence is `localStorage` plus explicit JSON/CSV download.
+- **Sheets** — `apps-script/*.gs`. Copy-paste into the Apps Script editor, or `clasp` from `apps-script/` (`appsscript.json` lives there).
+
+If you change placement behavior, update **both** `web/engine.js` and `apps-script/SchedulingEngine.gs` / `DataHelpers.gs`.
+
+Google's [`clasp`](https://github.com/google/clasp) CLI syncs the Sheets project: `npm install -g @google/clasp`, `clasp login`, then from `apps-script/` run `clasp clone <scriptId>` or `clasp create`, then `clasp push` / `clasp pull`.
+
+Every function in every `.gs` file shares one global scope (that's how Apps Script works — no imports/exports needed between files), so the six-file split is purely organizational. Reading `apps-script/SchedulingEngine.gs` end to end is the fastest way to understand the algorithm; `web/engine.js` is the same logic for the browser.
