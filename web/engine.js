@@ -910,7 +910,59 @@ function findAlternativeSlots(input, logRow) {
   try { sessionLength = timeStrToMinutes(logRow.end) - timeStrToMinutes(logRow.start); } catch (e) { sessionLength = settings.minSessionLength; }
   const session = { members, sessionLength, week: weekNum, reqId: String(logRow.groupId || members[0].id) };
   const candidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, [], {});
-  return { student: members[0], members, mateIds, isAllWeeks, weekNum, candidates: candidates.slice(0, 24) };
+  // Prefer 15-min-aligned starts (week calendar rows) and spread across days so
+  // drag-drop targets light up across the week, not only Mon morning.
+  return {
+    student: members[0],
+    members,
+    mateIds,
+    isAllWeeks,
+    weekNum,
+    candidates: pickDiverseCandidates(candidates, 80),
+  };
+}
+
+/** Spread candidates across days/weeks; prefer times that land on the calendar grid. */
+function pickDiverseCandidates(candidates, limit) {
+  const lim = limit || 80;
+  if (!candidates || !candidates.length) return [];
+  const aligned = candidates.filter(c => c.start % 15 === 0);
+  const preferred = aligned.length ? aligned : candidates;
+  const buckets = {};
+  preferred.forEach(c => {
+    const key = String(c.day) + '|' + String(c.week != null ? c.week : '');
+    (buckets[key] = buckets[key] || []).push(c);
+  });
+  const keys = Object.keys(buckets);
+  const out = [];
+  const seen = {};
+  let i = 0;
+  while (out.length < lim) {
+    let added = false;
+    for (let k = 0; k < keys.length; k++) {
+      const c = buckets[keys[k]][i];
+      if (!c) continue;
+      const id = c.day + '|' + c.start + '|' + (c.week != null ? c.week : '');
+      if (seen[id]) continue;
+      seen[id] = true;
+      out.push(c);
+      added = true;
+      if (out.length >= lim) break;
+    }
+    if (!added) break;
+    i++;
+  }
+  if (out.length < lim) {
+    for (let n = 0; n < candidates.length; n++) {
+      const c = candidates[n];
+      const id = c.day + '|' + c.start + '|' + (c.week != null ? c.week : '');
+      if (seen[id]) continue;
+      seen[id] = true;
+      out.push(c);
+      if (out.length >= lim) break;
+    }
+  }
+  return out;
 }
 
 function buildCalendarModel(logRows, settings, showAllWeeks) {
@@ -1103,7 +1155,7 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
-    computeOpenSlots, findAlternativeSlots, buildCalendarModel,
+    computeOpenSlots, findAlternativeSlots, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
     sessionMateRows, sessionKeyFromLogRow, findAlternativeSlots, reviewFromScheduleLog,

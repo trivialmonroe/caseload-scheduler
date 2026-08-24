@@ -174,8 +174,25 @@
     details.adv { margin-top: 16px; }
     details.adv summary { cursor: pointer; color: var(--muted); font-weight: 600; }
     input[type="time"] { min-height: 38px; }
-    .sess { cursor: pointer; }
+    .sess { cursor: grab; user-select: none; }
     .sess:hover { filter: brightness(1.08); }
+    .sess.dragging { opacity: .55; cursor: grabbing; }
+    .sess.locked-drag { cursor: pointer; }
+    .cal-slot { min-height: 28px; }
+    .cal-slot.drop-ok {
+      background: #dcfce7 !important;
+      box-shadow: inset 0 0 0 2px #16a34a;
+    }
+    .cal-slot.drop-hover {
+      background: #bbf7d0 !important;
+      box-shadow: inset 0 0 0 2px #15803d;
+    }
+    .cal-grid.dnd-active .cal-slot:not(.drop-ok) {
+      background: #fafaf9;
+    }
+    .dnd-hint {
+      font-size: 13px; color: var(--muted); margin: 0 0 12px;
+    }
     .coverage-banner {
       border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412;
       padding: 10px 12px; border-radius: 10px; margin: 0 0 14px; font-size: 13px;
@@ -265,6 +282,8 @@ let csvImportMode = 'replace';
 let caseloadDirty = false;
 let undoSnapshot = null;
 let showPrintPanel = false;
+let dragState = null; // { index, keys: {'Mon|480': true}, weekLabel }
+let suppressSessionClick = false;
 let printOpts = {
   teachers: true,
   groups: true,
@@ -692,15 +711,16 @@ function sessionPopoverHtml() {
       <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
     </div>
     <div class="field">
-      <label>Move group to another valid time</label>
+      <label>Or pick a valid time (same as dropping on the calendar)</label>
       <div class="chip-row">`;
   if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
   else {
     const list = found.candidates || [];
     if (!list.length) html += '<span class="meta">No other slots fit current locks and blackouts for this whole group.</span>';
-    list.forEach((c, n) => {
+    list.slice(0, 24).forEach((c, n) => {
       html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
     });
+    if (list.length > 24) html += `<span class="meta">+${list.length - 24} more — drag on the calendar to see all valid cells</span>`;
   }
   html += `</div></div></div>`;
   return html;
@@ -833,7 +853,8 @@ function renderWeekBody() {
       </div>`;
   }
   const cal = buildCalendarModel(log, state.settings, showAllWeeks);
-  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered. Click a block to lock, move, or edit the group.</p>
+  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered.</p>
+    <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it (everyone in the group moves together). Click a block to lock or edit members. Coverage is a report tab — edits happen on this calendar. Locked groups stay put when you regenerate.</p>
     ${coverageBannerHtml()}
     <div class="stat-grid no-print">
       <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
@@ -881,21 +902,229 @@ function renderWeekGrid(cal, week) {
     const r1 = Math.min(rows, Math.max(r0 + 1, Math.round((e.end - start) / inc)));
     const color = cal.gradeColors[e.grade] || { bg: '#444', text: '#fff' };
     const text = formatSessionCell(e, printOpts);
-    if (cells[e.day]) cells[e.day][r0] = { span: Math.max(1, r1 - r0), text, color, day: e.day, start: e.start, studentId: (e.studentIds && e.studentIds[0]) || '' };
+    if (cells[e.day]) cells[e.day][r0] = {
+      span: Math.max(1, r1 - r0), text, color, day: e.day, start: e.start,
+      studentId: (e.studentIds && e.studentIds[0]) || '',
+      groupId: e.groupId || ''
+    };
     for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
   });
-  let html = '<div class="cal-grid">';
+  let html = '<div class="cal-grid" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
   html += '<div class="cal-head">Time</div>' + DAYS.map(d => '<div class="cal-head">' + d + '</div>').join('');
   for (let r = 0; r < rows; r++) {
-    html += '<div>' + esc(minutesToTimeStr(start + r * inc)) + '</div>';
+    const slotStart = start + r * inc;
+    html += '<div>' + esc(minutesToTimeStr(slotStart)) + '</div>';
     DAYS.forEach(d => {
       const c = cells[d][r];
       if (c === 'skip') return;
-      if (!c) { html += '<div></div>'; return; }
-      html += `<div style="grid-row: span ${c.span}"><div class="sess${selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId) ? ' on' : ''}" title="Lock, move, or edit group" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${c.text}</div></div>`;
+      const spanMins = c ? c.span * inc : inc;
+      const cellStart = c ? c.start : slotStart;
+      const ok = dragState && candidateForSlot(d, cellStart, weekLabel, spanMins) ? ' drop-ok' : '';
+      if (!c) {
+        html += `<div class="cal-slot${ok}" data-day="${d}" data-start="${slotStart}" data-span="${inc}" data-week="${esc(weekLabel)}"></div>`;
+        return;
+      }
+      const isSel = selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId);
+      const logIdx = (state.scheduleLog || []).findIndex(row => {
+        try {
+          return row.day === c.day && timeStrToMinutes(row.start) === c.start && String(row.studentId) === String(c.studentId);
+        } catch (e) { return false; }
+      });
+      const locked = logIdx >= 0 && String(state.scheduleLog[logIdx].locked).toLowerCase() === 'yes';
+      html += `<div class="cal-slot${ok}" style="grid-row: span ${c.span}" data-day="${d}" data-start="${c.start}" data-span="${spanMins}" data-week="${esc(weekLabel)}">
+        <div class="sess${isSel ? ' on' : ''}${locked ? ' locked-drag' : ''}"
+          draggable="${locked ? 'false' : 'true'}"
+          data-log-index="${logIdx}"
+          title="${locked ? 'Unlock to drag — click to edit' : 'Drag to a green cell, or click to edit'}"
+          onclick="onSessionClick('${esc(c.day)}',${c.start},'${esc(c.studentId)}')"
+          style="background:${c.color.bg};color:${c.color.text}">${c.text}</div>
+      </div>`;
     });
   }
   return html + '</div>';
+}
+
+function onSessionClick(day, startMins, studentId) {
+  if (suppressSessionClick) { suppressSessionClick = false; return; }
+  openCalendarSession(day, startMins, studentId);
+}
+
+function weekKeyFromLabel(weekLabel) {
+  if (!weekLabel || weekLabel === 'Every Week') return ALL_WEEKS_KEY;
+  const n = Number(String(weekLabel).replace(/[^0-9]/g, ''));
+  return Number.isFinite(n) ? n : ALL_WEEKS_KEY;
+}
+
+/** Match a calendar cell to the best valid candidate (grid rows are coarser than slotIncrement). */
+function candidateForSlot(day, startMins, weekLabel, spanMins) {
+  if (!dragState || !dragState.candidates || !dragState.candidates.length) return null;
+  const start = Number(startMins);
+  const span = Number(spanMins) || 15;
+  const week = weekKeyFromLabel(weekLabel);
+  const pool = dragState.candidates.filter(c => {
+    if (c.day !== day) return false;
+    const cw = c.week;
+    if (week === ALL_WEEKS_KEY || week === 'ALL') {
+      if (cw !== ALL_WEEKS_KEY && cw !== 'ALL' && cw != null && cw !== ANY_WEEK_KEY) return false;
+    } else if (Number(cw) !== Number(week) && cw !== ALL_WEEKS_KEY && cw !== 'ALL') {
+      return false;
+    }
+    return c.start >= start && c.start < start + span;
+  });
+  if (!pool.length) return null;
+  pool.sort((a, b) => Math.abs(a.start - start) - Math.abs(b.start - start));
+  return pool[0];
+}
+
+function moveSessionToCandidate(logIndex, candidate) {
+  const row = state.scheduleLog[logIndex];
+  if (!row || !candidate) return false;
+  const dur = timeStrToMinutes(row.end) - timeStrToMinutes(row.start);
+  const mates = sessionMateRows(state.scheduleLog, row);
+  mates.forEach(r => {
+    r.day = candidate.day;
+    r.start = minutesToTimeStr(candidate.start);
+    r.end = minutesToTimeStr(candidate.start + dur);
+    if (candidate.week && candidate.week !== ALL_WEEKS_KEY && candidate.week !== 'ALL') {
+      r.week = 'Week ' + candidate.week;
+    }
+  });
+  return true;
+}
+
+function applyAlt(n) {
+  if (altFor == null) return;
+  const found = findAlternativeSlots(engineInput(), state.scheduleLog[altFor]);
+  const c = found.candidates[n];
+  if (!c) return;
+  moveSessionToCandidate(altFor, c);
+  refreshLiveReview('Moved session (whole group).');
+  altFor = null;
+  dragState = null;
+  render();
+}
+
+function clearDropHighlights() {
+  document.querySelectorAll('.cal-slot.drop-ok, .cal-slot.drop-hover').forEach(el => {
+    el.classList.remove('drop-ok', 'drop-hover');
+  });
+  document.querySelectorAll('.cal-grid.dnd-active').forEach(g => g.classList.remove('dnd-active'));
+}
+
+function endDragVisual() {
+  clearDropHighlights();
+  document.querySelectorAll('.sess.dragging').forEach(el => el.classList.remove('dragging'));
+}
+
+function paintDropTargets() {
+  clearDropHighlights();
+  if (!dragState) return;
+  document.querySelectorAll('.cal-grid').forEach(g => g.classList.add('dnd-active'));
+  document.querySelectorAll('.cal-slot').forEach(slot => {
+    if (
+      candidateForSlot(
+        slot.getAttribute('data-day'),
+        slot.getAttribute('data-start'),
+        slot.getAttribute('data-week'),
+        slot.getAttribute('data-span')
+      )
+    ) {
+      slot.classList.add('drop-ok');
+    }
+  });
+}
+
+function bindCalendarDnD() {
+  if (!document.querySelector('.cal-grid')) return;
+
+  document.querySelectorAll('.sess[draggable="true"]').forEach(el => {
+    if (el.dataset.dndBound === '1') return;
+    el.dataset.dndBound = '1';
+    el.addEventListener('dragstart', (e) => {
+      const idx = Number(el.getAttribute('data-log-index'));
+      if (!Number.isFinite(idx) || idx < 0 || !state.scheduleLog[idx]) {
+        e.preventDefault();
+        return;
+      }
+      const row = state.scheduleLog[idx];
+      if (String(row.locked).toLowerCase() === 'yes') {
+        e.preventDefault();
+        setStatus('Unlock this session before dragging.', 'bad');
+        return;
+      }
+      const found = findAlternativeSlots(engineInput(), row);
+      if (found.error) {
+        e.preventDefault();
+        setStatus(found.error, 'bad');
+        return;
+      }
+      if (!(found.candidates || []).length) {
+        e.preventDefault();
+        setStatus('No valid alternate slots for this group right now.', 'bad');
+        return;
+      }
+      dragState = { index: idx, candidates: found.candidates || [] };
+      el.classList.add('dragging');
+      suppressSessionClick = true;
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(idx)); } catch (err) {}
+      paintDropTargets();
+      setStatus('Drop on a green cell to move this group. Escape cancels.', 'ok');
+    });
+    el.addEventListener('dragend', () => {
+      dragState = null;
+      endDragVisual();
+      setTimeout(() => { suppressSessionClick = false; }, 80);
+    });
+  });
+
+  document.querySelectorAll('.cal-slot').forEach(slot => {
+    if (slot.dataset.dndBound === '1') return;
+    slot.dataset.dndBound = '1';
+    slot.addEventListener('dragover', (e) => {
+      if (!dragState) return;
+      const cand = candidateForSlot(
+        slot.getAttribute('data-day'),
+        slot.getAttribute('data-start'),
+        slot.getAttribute('data-week'),
+        slot.getAttribute('data-span')
+      );
+      if (!cand) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      slot.classList.add('drop-hover');
+    });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drop-hover'));
+    slot.addEventListener('drop', (e) => {
+      if (!dragState) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cand = candidateForSlot(
+        slot.getAttribute('data-day'),
+        slot.getAttribute('data-start'),
+        slot.getAttribute('data-week'),
+        slot.getAttribute('data-span')
+      );
+      if (!cand) {
+        setStatus('That slot is not valid for this group.', 'bad');
+        return;
+      }
+      const idx = dragState.index;
+      const studentId = state.scheduleLog[idx] && state.scheduleLog[idx].studentId;
+      dragState = null;
+      endDragVisual();
+      moveSessionToCandidate(idx, cand);
+      altFor = state.scheduleLog.findIndex(r =>
+        String(r.studentId) === String(studentId) && r.day === cand.day &&
+        (() => { try { return timeStrToMinutes(r.start) === cand.start; } catch (err) { return false; } })()
+      );
+      if (altFor < 0) altFor = null;
+      refreshLiveReview('Moved on the calendar.');
+      suppressSessionClick = true;
+      render();
+      setTimeout(() => { suppressSessionClick = false; }, 80);
+    });
+  });
 }
 
 function openCalendarSession(day, startMins, studentId) {
@@ -976,26 +1205,6 @@ function renderAlts() {
   });
   if (!found.candidates.length) html += '<span class="meta">None available.</span>';
   return html + '</div><button class="ghost" onclick="altFor=null;render()">Close</button></div>';
-}
-
-function applyAlt(n) {
-  const row = state.scheduleLog[altFor];
-  const found = findAlternativeSlots(engineInput(), row);
-  const c = found.candidates[n];
-  if (!c) return;
-  const dur = timeStrToMinutes(row.end) - timeStrToMinutes(row.start);
-  const gid = row.groupId;
-  state.scheduleLog.forEach(r => {
-    const same = r === row || (gid && r.groupId === gid && r.week === row.week && r.day === row.day && r.start === row.start);
-    if (!same) return;
-    r.day = c.day;
-    r.start = minutesToTimeStr(c.start);
-    r.end = minutesToTimeStr(c.start + dur);
-    if (c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL') r.week = 'Week ' + c.week;
-  });
-  refreshLiveReview('Moved session (whole group).');
-  altFor = null;
-  render();
 }
 
 function renderOpenBody() {
@@ -1425,10 +1634,14 @@ function render() {
   if (undoBtn) undoBtn.classList.toggle('hidden', !undoSnapshot);
   const pop = document.getElementById('session-popover');
   if (pop) pop.scrollIntoView({ block: 'nearest' });
+  bindCalendarDnD();
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && altFor != null) { altFor = null; render(); }
+  if (e.key === 'Escape') {
+    if (dragState) { dragState = null; endDragVisual(); setStatus('Drag cancelled.', 'ok'); return; }
+    if (altFor != null) { altFor = null; render(); }
+  }
 });
 window.addEventListener('afterprint', () => {
   if (!document.body.classList.contains('print-week')) return;
