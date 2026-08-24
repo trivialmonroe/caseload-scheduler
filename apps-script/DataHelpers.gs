@@ -210,13 +210,18 @@ function loadStudents() {
     if (r[16]) {
       try { fixedStart = timeStrToMinutes(r[16]); } catch (e) { fixedStart = null; } // bad format - ignore rather than crash the whole run
     }
+    const serviceType = String(r[4]).trim();
+    const noGroupRaw = String(r[17] == null ? '' : r[17]).trim().toLowerCase();
+    const noGroup = (noGroupRaw === 'yes' || noGroupRaw === 'y' || noGroupRaw === 'true' || noGroupRaw === '1')
+      && serviceType.toLowerCase() !== 'group';
     return {
       id: String(r[0]).trim(),
       firstName: r[1],
       lastName: r[2],
       grade: String(r[3]).trim(),
-      serviceType: String(r[4]).trim(),
-      groupId: r[5] ? String(r[5]).trim() : '',
+      serviceType: serviceType,
+      groupId: (!noGroup && r[5]) ? String(r[5]).trim() : '',
+      noGroup: noGroup,
       frequencyType: (String(r[6]).trim().toLowerCase() === 'quarterly') ? 'Quarterly' : 'Weekly',
       minutesPerWeek: Number(r[7]) || 0,
       preferredSessionLength: r[8] ? Number(r[8]) : null,

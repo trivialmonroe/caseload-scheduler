@@ -18,6 +18,7 @@ This repo ships **two products** that share a scheduling algorithm:
 - On the week grid, click a block to lock or move it **without leaving Week**. Print uses **Print** on that tab (calendars only).
 - Import/export: full **workspace JSON**, or per-table **CSV** (students, hours, grades, blocks, schedule). CSV import can replace a table or merge by student ID.
 - After caseload edits, a banner on Students / Hours / Schedule prompts regenerate. Generate confirms if `validateCaseload` reports issues.
+- Individual students can be marked **No Group** so auto-group rescue / front-load joining never combines them with others.
 - Feature set vs Sheets: generate, coverage, session log with locks, alternate times, open-slot grids, printable week view, student form, validate, A/B hours, weekly + quarterly, groups, auto-group rescue.
 - Algorithm lives in `web/engine.js`. If you change placement rules, also update `apps-script/SchedulingEngine.gs` and `apps-script/DataHelpers.gs`.
 

@@ -37,6 +37,12 @@
     <input id="groupId" placeholder="e.g., ARTIC-GROUP-1">
   </div>
 
+  <div id="noGroupRow">
+    <label><input id="noGroup" type="checkbox" style="width:auto;margin-right:6px"> No Group
+      <div class="hint">Keep this student individual — never join an auto-formed group, and do not let others join via rescue</div>
+    </label>
+  </div>
+
   <label>Frequency Type</label>
   <select id="frequencyType" onchange="toggleFrequency()">
     <option value="Weekly">Weekly (e.g. "60 min/week")</option>
@@ -92,8 +98,10 @@
 
   <script>
     function toggleGroup() {
-      document.getElementById('groupIdRow').style.display =
-        document.getElementById('serviceType').value === 'Group' ? 'block' : 'none';
+      const isGroup = document.getElementById('serviceType').value === 'Group';
+      document.getElementById('groupIdRow').style.display = isGroup ? 'block' : 'none';
+      document.getElementById('noGroupRow').style.display = isGroup ? 'none' : 'block';
+      if (isGroup) document.getElementById('noGroup').checked = false;
     }
 
     function toggleFrequency() {
@@ -102,6 +110,7 @@
       document.querySelectorAll('.quarterlyOnly').forEach(el => el.style.display = isQuarterly ? 'block' : 'none');
     }
     toggleFrequency(); // initialize on load
+    toggleGroup();
 
     function submitForm() {
       const frequencyType = document.getElementById('frequencyType').value;
@@ -114,6 +123,7 @@
         grade: document.getElementById('grade').value.trim(),
         serviceType: document.getElementById('serviceType').value,
         groupId: document.getElementById('groupId').value.trim(),
+        noGroup: document.getElementById('serviceType').value === 'Individual' && document.getElementById('noGroup').checked,
         frequencyType: frequencyType,
         minutesPerWeek: document.getElementById('minutesPerWeek').value,
         sessionLength: document.getElementById('sessionLength').value,
@@ -134,6 +144,11 @@
       if (data.serviceType === 'Group' && !data.groupId) {
         document.getElementById('status').style.color = '#d93025';
         document.getElementById('status').innerText = 'Group students need a Group ID.';
+        return;
+      }
+      if (data.serviceType === 'Group' && data.noGroup) {
+        document.getElementById('status').style.color = '#d93025';
+        document.getElementById('status').innerText = 'No Group only applies to Individual students.';
         return;
       }
       if (!isQuarterly && !data.minutesPerWeek) {

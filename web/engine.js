@@ -162,19 +162,28 @@ function loadStudentConstraints(rows) {
   return map;
 }
 
+function truthyFlag(v) {
+  if (v === true || v === 1) return true;
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === 'yes' || s === 'y' || s === 'true' || s === '1';
+}
+
 function loadStudents(rows) {
   return (rows || []).map(s => {
     let fixedStart = null;
     if (s.fixedStart) {
       try { fixedStart = timeStrToMinutes(s.fixedStart); } catch (e) { fixedStart = null; }
     }
+    const serviceType = String(s.serviceType).trim();
+    const noGroup = truthyFlag(s.noGroup) && serviceType.toLowerCase() !== 'group';
     return {
       id: String(s.id).trim(),
       firstName: s.firstName,
       lastName: s.lastName,
       grade: String(s.grade).trim(),
-      serviceType: String(s.serviceType).trim(),
-      groupId: s.groupId ? String(s.groupId).trim() : '',
+      serviceType: serviceType,
+      groupId: (!noGroup && s.groupId) ? String(s.groupId).trim() : '',
+      noGroup: noGroup,
       frequencyType: (String(s.frequencyType).trim().toLowerCase() === 'quarterly') ? 'Quarterly' : 'Weekly',
       minutesPerWeek: Number(s.minutesPerWeek) || 0,
       preferredSessionLength: s.preferredSessionLength ? Number(s.preferredSessionLength) : null,
@@ -345,9 +354,10 @@ function isReqIdRepresented(scheduled, session) {
 }
 
 function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState) {
+  if (student.noGroup) return null;
   const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
   const candidates = hostCandidates.filter(entry => {
-    if (entry.members.some(m => m.id === student.id)) return false;
+    if (entry.members.some(m => m.id === student.id || m.noGroup)) return false;
     if (entry.members.length >= settings.maxGroupSize) return false;
     const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;
     if (needsEveryWeek !== hostIsEveryWeek) return false;
@@ -448,7 +458,7 @@ function runSchedulingEngine(input) {
   const studentsById = {};
   students.forEach(s => { studentsById[s.id] = s; });
   const individualsById = {};
-  students.forEach(s => { if (s.serviceType.toLowerCase() === 'individual') individualsById[s.id] = s; });
+  students.forEach(s => { if (s.serviceType.toLowerCase() === 'individual' && !s.noGroup) individualsById[s.id] = s; });
   const groupIdState = { counter: 0 };
 
   const { requirements: requirementSets, warnings: capacityWarnings } = buildRequirements(students, settings);
@@ -632,6 +642,7 @@ loadStudents = function(rows) {
     lastName: s.lastName || s.lastName || '',
     serviceType: s.serviceType || s.serviceType || 'Individual',
     groupId: s.groupId || s.groupId || '',
+    noGroup: s.noGroup,
     frequencyType: s.frequencyType || s.frequencyType || 'Weekly',
     minutesPerWeek: s.minutesPerWeek || s.minutesPerWeek || 0,
     preferredSessionLength: s.preferredSessionLength || s.preferredSessionLength || '',
@@ -810,6 +821,7 @@ function validateCaseload(state) {
         if (!groupMembers[gid]) groupMembers[gid] = [];
         groupMembers[gid].push({ id: label, freq, minutes: s.minutesPerWeek, sessionsQ: s.sessionsPerQuarter, lenQ: s.quarterlySessionLength });
       }
+      if (truthyFlag(s.noGroup)) issues.push(label + ': No Group cannot be set on a Group student.');
     }
     const grade = String(s.grade || '').trim();
     if (grade && !gradesInUse[grade]) issues.push(label + ': Grade "' + grade + '" has no grade-level blocks (lunch/specials will not apply).');
@@ -827,7 +839,7 @@ function validateCaseload(state) {
 
 // ── CSV / JSON workspace ────────────────────────────────────────────────────
 const CSV_SCHEMAS = {
-  students: ['id','firstName','lastName','grade','serviceType','groupId','frequencyType','minutesPerWeek','preferredSessionLength','sessionsPerQuarter','quarterlySessionLength','notes','status','teacher','fixedDay','fixedStart'],
+  students: ['id','firstName','lastName','grade','serviceType','groupId','noGroup','frequencyType','minutesPerWeek','preferredSessionLength','sessionsPerQuarter','quarterlySessionLength','notes','status','teacher','fixedDay','fixedStart'],
   availability: ['day','start','end','pattern','notes'],
   grades: ['grade','day','start','end','reason'],
   constraints: ['studentId','day','start','end','reason'],
@@ -902,6 +914,7 @@ function normalizeImportedStudent(o) {
     grade: get('grade'),
     serviceType: get('serviceType', 'Service Type') || 'Individual',
     groupId: get('groupId', 'Group ID'),
+    noGroup: get('noGroup', 'No Group', 'NoGroup'),
     frequencyType: get('frequencyType', 'Frequency Type') || 'Weekly',
     minutesPerWeek: get('minutesPerWeek', 'Minutes/Week'),
     preferredSessionLength: get('preferredSessionLength', 'Preferred Session Length'),

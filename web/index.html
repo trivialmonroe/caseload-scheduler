@@ -831,7 +831,7 @@ function studentCardsHtml(list) {
       : '<span class="meta">No extra blocks — grade lunch/specials still apply</span>';
     return `<div class="card student" onclick="openStudentForm(${idx})">
       <h3>${esc(s.lastName)}, ${esc(s.firstName)} <span class="pill">${esc(s.status || 'Active')}</span> ${covPill}</h3>
-      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''}${s.noGroup ? ' · <span class="pill warn">No Group</span>' : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
       <div class="meta" style="margin-top:8px">${blockBits}</div>
       <div class="row" style="margin:10px 0 0">
         <button onclick="event.stopPropagation();openStudentForm(${idx})">Edit</button>
@@ -880,7 +880,7 @@ function groupOptions(selected) {
 function openStudentForm(idx) {
   const isNew = idx == null;
   const s = isNew
-    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
+    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', noGroup: false, frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
     : Object.assign({}, state.students[idx]);
   const wrap = document.createElement('div');
   wrap.className = 'modal-bg';
@@ -893,6 +893,7 @@ function openStudentForm(idx) {
       <div><label>Teacher / room</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
       <div><label>Service</label><select id="f-service"><option>Individual</option><option>Group</option></select></div>
       <div id="group-fields"><label>Group</label><select id="f-gid-pick">${groupOptions(s.groupId)}</select><input id="f-gid" class="${s.groupId && knownGroups().indexOf(s.groupId) < 0 ? '' : 'hidden'}" placeholder="e.g. G1" value="${esc(s.groupId)}"></div>
+      <div id="no-group-fields"><label>Auto-grouping</label><label style="font-weight:500;display:flex;align-items:center;gap:8px;margin:0"><input id="f-nogroup" type="checkbox" style="width:auto" ${s.noGroup ? 'checked' : ''}> No Group — never join an auto-group</label></div>
       <div><label>Frequency</label><select id="f-freq"><option>Weekly</option><option>Quarterly</option></select></div>
       <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
     </div>
@@ -931,12 +932,24 @@ function openStudentForm(idx) {
   const sync = () => {
     const service = wrap.querySelector('#f-service').value;
     const freq = wrap.querySelector('#f-freq').value;
+    const noGroupEl = wrap.querySelector('#f-nogroup');
     wrap.querySelector('#weekly-fields').classList.toggle('hidden', freq !== 'Weekly');
     wrap.querySelector('#quarterly-fields').classList.toggle('hidden', freq !== 'Quarterly');
     wrap.querySelector('#group-fields').classList.toggle('hidden', service !== 'Group');
+    wrap.querySelector('#no-group-fields').classList.toggle('hidden', service !== 'Individual');
+    if (service === 'Group' && noGroupEl) noGroupEl.checked = false;
   };
   wrap.querySelector('#f-service').onchange = sync;
   wrap.querySelector('#f-freq').onchange = sync;
+  wrap.querySelector('#f-nogroup').onchange = () => {
+    if (wrap.querySelector('#f-nogroup').checked) {
+      wrap.querySelector('#f-service').value = 'Individual';
+      wrap.querySelector('#f-gid-pick').value = '';
+      wrap.querySelector('#f-gid').value = '';
+      wrap.querySelector('#f-gid').classList.add('hidden');
+      sync();
+    }
+  };
   wrap.querySelector('#f-grade').onchange = () => {
     const custom = wrap.querySelector('#f-grade-new');
     const isOther = wrap.querySelector('#f-grade').value === '__new__';
@@ -969,6 +982,7 @@ function openStudentForm(idx) {
       groupId: wrap.querySelector('#f-service').value === 'Group'
         ? (groupPick === '__new__' || !gidCustom.classList.contains('hidden') ? gidCustom.value.trim() : groupPick)
         : '',
+      noGroup: wrap.querySelector('#f-service').value === 'Individual' && wrap.querySelector('#f-nogroup').checked,
       frequencyType: wrap.querySelector('#f-freq').value,
       minutesPerWeek: wrap.querySelector('#f-min').value,
       preferredSessionLength: wrap.querySelector('#f-pref').value,

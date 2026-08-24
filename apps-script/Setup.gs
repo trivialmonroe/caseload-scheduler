@@ -73,7 +73,7 @@ function setupSheets() {
       'Sessions Per Quarter (Quarterly only)',
       'Session Length (min, Quarterly only)',
       'Sessions/Week (auto, informational)', 'Notes', 'Status (Active/Inactive)', 'Teacher',
-      'Fixed Day (optional)', 'Fixed Start Time (optional, HH:MM)'],
+      'Fixed Day (optional)', 'Fixed Start Time (optional, HH:MM)', 'No Group (Yes/No)'],
     [SHEET_NAMES.GRADES]: ['Grade', "Day (single, 'Mon-Fri' range, comma list, or 'All')", 'Start Time (HH:MM)', 'End Time (HH:MM)', 'Reason'],
     [SHEET_NAMES.CONSTRAINTS]: ['Student ID', "Day (single, 'Mon-Fri' range, comma list, or 'All')", 'Start Time (HH:MM)', 'End Time (HH:MM)', 'Reason'],
     [SHEET_NAMES.AVAILABILITY]: ["Day (single, 'Mon-Fri' range, comma list, or 'All')", 'Start Time (HH:MM)', 'End Time (HH:MM)', "Week Pattern (optional: A, B, or blank for every week)", 'Notes'],
@@ -142,6 +142,9 @@ function applyStudentValidation(ss) {
   // Fixed Day (optional) - blank allowed, same reasoning as Week Pattern above.
   const dayRule = SpreadsheetApp.newDataValidation().requireValueInList(DAYS, true).setAllowInvalid(true).build();
   studentsSheet.getRange(2, 16, maxRows, 1).setDataValidation(dayRule); // P: Fixed Day
+
+  const noGroupRule = SpreadsheetApp.newDataValidation().requireValueInList(['Yes', 'No'], true).setAllowInvalid(true).build();
+  studentsSheet.getRange(2, 18, maxRows, 1).setDataValidation(noGroupRule); // R: No Group
 
   // Locked (Yes/No) on Schedule_Log - blank means unlocked, same as the others.
   const logSheet = ss.getSheetByName(SHEET_NAMES.LOG);
@@ -272,7 +275,7 @@ function buildReadMeSheet(ss) {
   blank();
 
   setTitle('Automatic Group Rescue', 14);
-  setBody('After the main pass, any Individual student still unscheduled gets checked against every already-scheduled session for a compatible bucket-mate (closest grade first) to see if they can simply join it. A host session can be slightly longer than what the joining student strictly needs - up to "Group Rescue Extra Minutes Allowed" (Settings tab, default 10) - so a student can get a few bonus minutes of playtime or be dismissed a bit early within a session built for someone else\'s slightly longer need. Groups stop growing once they hit "Max Students Per Auto-Group" (Settings tab, default 6). Auto-formed groups get a Group ID starting "AUTO-GROUP-" and show up highlighted in light purple on Schedule_Log, so they\'re easy to spot and review for clinical fit - the algorithm only checks scheduling feasibility, not whether kids are a good therapeutic match. Manually-created groups from the Students sheet are never touched by this or counted against the cap.');
+  setBody('After the main pass, any Individual student still unscheduled gets checked against every already-scheduled session for a compatible bucket-mate (closest grade first) to see if they can simply join it. A host session can be slightly longer than what the joining student strictly needs - up to "Group Rescue Extra Minutes Allowed" (Settings tab, default 10) - so a student can get a few bonus minutes of playtime or be dismissed a bit early within a session built for someone else\'s slightly longer need. Groups stop growing once they hit "Max Students Per Auto-Group" (Settings tab, default 6). Auto-formed groups get a Group ID starting "AUTO-GROUP-" and show up highlighted in light purple on Schedule_Log, so they\'re easy to spot and review for clinical fit - the algorithm only checks scheduling feasibility, not whether kids are a good therapeutic match. Manually-created groups from the Students sheet are never touched by this or counted against the cap. Set No Group = Yes on an Individual student to keep them out of auto-grouping entirely (they will not join another session, and nobody will join theirs via rescue).');
   blank();
 
   setTitle('Teacher Info', 14);
