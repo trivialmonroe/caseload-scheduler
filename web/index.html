@@ -208,6 +208,46 @@
     .dnd-hint {
       font-size: 13px; color: var(--muted); margin: 0 0 12px;
     }
+    .cal-legend {
+      display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 12px; color: var(--muted);
+      margin: 0 0 12px; align-items: center;
+    }
+    .cal-legend .leg { display: inline-flex; align-items: center; gap: 6px; }
+    .cal-legend .swatch {
+      width: 14px; height: 14px; border-radius: 4px; display: inline-block;
+    }
+    .cal-legend .swatch.green { background: #dcfce7; box-shadow: inset 0 0 0 2px #16a34a; }
+    .cal-legend .swatch.amber { background: #fffbeb; box-shadow: inset 0 0 0 2px #d97706; outline: 1px dashed #f59e0b; }
+    .week-layout {
+      display: grid; grid-template-columns: 1fr; gap: 0; align-items: start;
+    }
+    @media (min-width: 1100px) {
+      .week-layout.drawer-open { grid-template-columns: 1fr min(340px, 32vw); gap: 16px; }
+    }
+    .session-drawer {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 14px 16px; box-shadow: var(--shadow); max-height: calc(100vh - 120px);
+      overflow: auto; position: sticky; top: 72px;
+    }
+    .session-drawer h3 { margin: 0 0 4px; font-size: 1rem; }
+    .session-drawer details.drawer-sec {
+      border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px;
+    }
+    .session-drawer details.drawer-sec > summary {
+      cursor: pointer; font-weight: 600; font-size: 13px; list-style: none;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .session-drawer details.drawer-sec > summary::-webkit-details-marker { display: none; }
+    .sess-badge {
+      display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .03em;
+      padding: 1px 4px; border-radius: 4px; margin-right: 4px; vertical-align: middle;
+      background: rgba(0,0,0,.22);
+    }
+    .sess-badge.auto { background: rgba(255,255,255,.28); }
+    .cal-grid.compact-cal > div { min-height: 20px; }
+    .cal-grid.compact-cal .sess { font-size: 10px; padding: 2px 4px; line-height: 1.2; }
+    .cal-grid.compact-cal .sess-sub { display: none; }
+    .cal-grid.compact-cal .sess-badge { display: none; }
     .coverage-banner {
       border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412;
       padding: 10px 12px; border-radius: 10px; margin: 0 0 14px; font-size: 13px;
@@ -220,7 +260,7 @@
     .member-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
     .sess .sess-sub { display: block; opacity: .9; font-size: 10px; }
     @media print {
-      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .print-panel { display: none !important; }
+      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .session-drawer, .print-panel { display: none !important; }
       body { display: block; background: #fff; }
       main { padding: 0; }
       .week-cals { gap: 24px; }
@@ -260,6 +300,8 @@
     <div class="grow"></div>
     <div class="status" id="status">Ready</div>
     <button type="button" onclick="validateNow()">Check</button>
+    <button type="button" id="undo-edit-btn" class="ghost hidden" onclick="undoLastEdit()" title="Undo edit (Ctrl+Z)">Undo</button>
+    <button type="button" id="redo-edit-btn" class="ghost hidden" onclick="redoLastEdit()" title="Redo (Ctrl+Shift+Z)">Redo</button>
     <button type="button" class="primary" onclick="generateNow()">Generate schedule</button>
     <button type="button" id="undo-btn" class="hidden" onclick="undoLastGenerate()">Undo generate</button>
   </div>
@@ -281,8 +323,9 @@
     <button type="button" data-view="settings" onclick="showView('settings')">Settings</button>
   </nav>
   <main id="main"></main>
-  <input id="filePick" type="file" class="hidden" accept=".json,.csv,text/csv,application/json">
+  <input id="filePick" type="file" class="hidden" multiple accept=".json,.csv,.xlsx,.xls,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="engine.js"></script>
 <script>
 'use strict';
@@ -296,7 +339,10 @@ let studentQuery = '';
 let csvImportMode = 'replace';
 let caseloadDirty = false;
 let undoSnapshot = null;
+let editUndoStack = [];
+let editRedoStack = [];
 let showPrintPanel = false;
+let compactCalendar = false;
 let dragState = null; // { index, keys: {'Mon|480': true}, weekLabel }
 let suppressSessionClick = false;
 let printOpts = {
@@ -470,6 +516,8 @@ function generateNow() {
   const result = runSchedulingEngine(engineInput());
   if (result.error) { setStatus(result.error, 'bad'); return; }
   undoSnapshot = prev;
+  editUndoStack = [];
+  editRedoStack = [];
   state.scheduleLog = result.logRows;
   state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
   caseloadDirty = false;
@@ -488,6 +536,66 @@ function undoLastGenerate() {
   persist();
   setStatus('Restored the previous schedule.', 'ok');
   render();
+}
+
+function snapshotForEdit() {
+  return {
+    scheduleLog: JSON.parse(JSON.stringify(state.scheduleLog || [])),
+    lastRun: state.lastRun ? JSON.parse(JSON.stringify(state.lastRun)) : null,
+  };
+}
+
+function beginEdit(label) {
+  if (!(state.scheduleLog || []).length && label !== 'Lock') return;
+  editUndoStack.push(Object.assign({ label: label || 'Edit' }, snapshotForEdit()));
+  if (editUndoStack.length > 40) editUndoStack.shift();
+  editRedoStack = [];
+  updateEditUndoButtons();
+}
+
+function restoreEditSnapshot(snap) {
+  state.scheduleLog = snap.scheduleLog;
+  state.lastRun = snap.lastRun;
+  persist();
+}
+
+function undoLastEdit() {
+  if (!editUndoStack.length) return;
+  editRedoStack.push(Object.assign({ label: 'Redo point' }, snapshotForEdit()));
+  const snap = editUndoStack.pop();
+  restoreEditSnapshot(snap);
+  altFor = null;
+  dragState = null;
+  refreshLiveReview('Undid: ' + (snap.label || 'edit') + '.');
+  render();
+}
+
+function redoLastEdit() {
+  if (!editRedoStack.length) return;
+  editUndoStack.push(Object.assign({ label: 'Undo point' }, snapshotForEdit()));
+  const snap = editRedoStack.pop();
+  restoreEditSnapshot(snap);
+  refreshLiveReview('Redid edit.');
+  render();
+}
+
+function updateEditUndoButtons() {
+  const u = document.getElementById('undo-edit-btn');
+  const r = document.getElementById('redo-edit-btn');
+  if (u) u.classList.toggle('hidden', !editUndoStack.length);
+  if (r) r.classList.toggle('hidden', !editRedoStack.length);
+}
+
+function jumpToStudentSession(studentId) {
+  const i = (state.scheduleLog || []).findIndex(row => String(row.studentId) === String(studentId));
+  if (i < 0) { setStatus('No session on the calendar for that student yet.', 'bad'); return; }
+  altFor = i;
+  scheduleTab = 'week';
+  showView('schedule');
+  requestAnimationFrame(() => {
+    const el = document.querySelector('.sess.on') || document.querySelector('.sess[data-log-index="' + i + '"]');
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
 }
 
 function loadSampleAndGenerate() {
@@ -570,51 +678,139 @@ function mergeBy(existing, incoming, keyFn) {
   return Object.values(map);
 }
 
-function importText(name, text) {
-  if (/\.json$/i.test(name) || text.trim().startsWith('{')) {
-    const data = JSON.parse(text);
-    state = Object.assign(blankWorkspace(), data);
-    caseloadDirty = false;
-    persist();
-    setStatus('Opened workspace.', 'ok');
-    render();
-    return;
-  }
+function importJsonText(text) {
+  const data = JSON.parse(text);
+  state = Object.assign(blankWorkspace(), data);
+  caseloadDirty = false;
+  editUndoStack = [];
+  editRedoStack = [];
+  persist();
+  setStatus('Opened workspace.', 'ok');
+  render();
+}
+
+function importCsvText(name, text) {
   const rows = csvToObjects(text);
-  const headers = rows[0] ? Object.keys(rows[0]) : [];
-  const kind = detectCsvKind(headers);
+  if (!rows.length) { setStatus('Empty CSV.', 'bad'); return; }
+  const headers = Object.keys(rows[0]);
+  const kind = detectCsvKind(headers, name);
+  if (!kind) { setStatus('Could not detect CSV type. Use Apps Script tab names (Students.csv, MyAvailability.csv, …) or web headers.', 'bad'); return; }
   const merge = csvImportMode === 'merge';
-  if (kind === 'students') {
-    const incoming = rows.map(normalizeImportedStudent);
-    if (!merge && state.students.length && !confirm('Replace all ' + state.students.length + ' students with this CSV?')) return;
-    state.students = merge ? mergeBy(state.students, incoming, r => r.id) : incoming;
-  } else if (kind === 'availability') {
-    const incoming = rows.map(r => ({ day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, pattern: r.pattern || r.Pattern || '', notes: r.notes || r.Notes || '' }));
-    if (!merge && state.availability.length && !confirm('Replace all hours with this CSV?')) return;
-    state.availability = merge ? mergeBy(state.availability, incoming, r => [r.day, r.start, r.end, r.pattern].join('|')) : incoming;
-  } else if (kind === 'grades') {
-    const incoming = rows.map(r => ({ grade: r.grade || r.Grade, day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
-    if (!merge && state.grades.length && !confirm('Replace all grade blocks with this CSV?')) return;
-    state.grades = merge ? mergeBy(state.grades, incoming, r => [r.grade, r.day, r.start, r.end].join('|')) : incoming;
-  } else if (kind === 'constraints') {
-    const incoming = rows.map(r => ({ studentId: r.studentId || r['Student ID'], day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
-    if (!merge && state.constraints.length && !confirm('Replace all student blocks with this CSV?')) return;
-    state.constraints = merge ? mergeBy(state.constraints, incoming, r => [r.studentId, r.day, r.start, r.end].join('|')) : incoming;
-  } else if (kind === 'schedule') {
-    state.scheduleLog = rows;
-  } else { setStatus('Could not detect CSV type from headers.', 'bad'); return; }
-  persistCaseload();
+  if (!merge && kind === 'students' && state.students.length && !confirm('Replace all ' + state.students.length + ' students with this CSV?')) return;
+  if (!merge && kind === 'availability' && state.availability.length && !confirm('Replace all hours with this CSV?')) return;
+  if (!merge && kind === 'grades' && state.grades.length && !confirm('Replace all grade blocks with this CSV?')) return;
+  if (!merge && kind === 'constraints' && state.constraints.length && !confirm('Replace all student blocks with this CSV?')) return;
+  const imports = {};
+  imports[kind] = rows;
+  applyWorkbookImports(state, imports, { merge: kind === 'settings' ? true : merge });
+  if (kind === 'schedule') {
+    if ((state.scheduleLog || []).length) refreshLiveReview('Imported schedule.');
+    caseloadDirty = false;
+  } else {
+    caseloadDirty = true;
+  }
+  persist();
   setStatus((merge && kind !== 'schedule' ? 'Merged ' : 'Imported ') + kind + ' (' + rows.length + ' rows).', 'ok');
   render();
 }
 
+function importWorkbookFromSheets(sheetMap, label) {
+  const keys = Object.keys(sheetMap);
+  if (!keys.length) { setStatus('No recognized input sheets in file.', 'bad'); return; }
+  if (!confirm('Import ' + keys.join(', ') + ' from ' + label + '? Input tables will be replaced (schedule kept if not present).')) return;
+  applyWorkbookImports(state, sheetMap, { merge: false });
+  if (sheetMap.schedule) refreshLiveReview('Imported schedule from workbook.');
+  else caseloadDirty = true;
+  editUndoStack = [];
+  editRedoStack = [];
+  persist();
+  setStatus('Imported workbook: ' + keys.join(', '), 'ok');
+  render();
+}
+
+function parseXlsxToImports(buf) {
+  if (typeof XLSX === 'undefined') throw new Error('Spreadsheet library not loaded.');
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const imports = {};
+  wb.SheetNames.forEach(name => {
+    let kind = sheetNameToKind(name);
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' });
+    if (!rows.length) return;
+    if (!kind) kind = detectCsvKind(Object.keys(rows[0]), name);
+    if (!kind) return;
+    if (!imports[kind]) imports[kind] = [];
+    imports[kind] = imports[kind].concat(rows);
+  });
+  return imports;
+}
+
+function importXlsxBuffer(buf, filename) {
+  try {
+    importWorkbookFromSheets(parseXlsxToImports(buf), filename || 'workbook');
+  } catch (e) {
+    setStatus('Could not read spreadsheet: ' + e.message, 'bad');
+  }
+}
+
+async function importMultipleFiles(files) {
+  const imports = {};
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (/\.xlsx?$/i.test(f.name)) {
+      const buf = await f.arrayBuffer();
+      Object.assign(imports, parseXlsxToImports(buf));
+      continue;
+    }
+    const text = await f.text();
+    if (/\.json$/i.test(f.name) || text.trim().startsWith('{')) {
+      importJsonText(text);
+      return;
+    }
+    const rows = csvToObjects(text);
+    if (!rows.length) continue;
+    const kind = detectCsvKind(Object.keys(rows[0]), f.name);
+    if (!kind) continue;
+    if (!imports[kind]) imports[kind] = [];
+    imports[kind] = imports[kind].concat(rows);
+  }
+  if (!Object.keys(imports).length) {
+    setStatus('No recognized CSV/Excel tables in selection.', 'bad');
+    return;
+  }
+  importWorkbookFromSheets(imports, files.length + ' files');
+}
+
+function importText(name, text) {
+  if (/\.json$/i.test(name) || text.trim().startsWith('{')) {
+    importJsonText(text);
+    return;
+  }
+  importCsvText(name, text);
+}
+
+function importBinaryFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => importXlsxBuffer(reader.result, file.name);
+  reader.readAsArrayBuffer(file);
+}
+
+function handleFileList(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (files.length === 1) {
+    const f = files[0];
+    if (/\.xlsx?$/i.test(f.name)) { importBinaryFile(f); return; }
+    const reader = new FileReader();
+    reader.onload = () => importText(f.name, reader.result);
+    reader.readAsText(f);
+    return;
+  }
+  importMultipleFiles(files);
+}
+
 function pickFile() { document.getElementById('filePick').click(); }
 document.getElementById('filePick').addEventListener('change', (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const reader = new FileReader();
-  reader.onload = () => importText(f.name, reader.result);
-  reader.readAsText(f);
+  handleFileList(e.target.files);
   e.target.value = '';
 });
 
@@ -689,6 +885,7 @@ function sessionPopoverHtml() {
   if (altFor == null || !state.scheduleLog[altFor]) return '';
   const row = state.scheduleLog[altFor];
   const locked = String(row.locked).toLowerCase() === 'yes';
+  const autoGroup = String(row.groupId || '').indexOf('AUTO-GROUP-') === 0;
   const mates = sessionMateRows(state.scheduleLog, row);
   const found = findAlternativeSlots(engineInput(), row);
   const swapsFound = findSwapCandidates(engineInput(), row);
@@ -700,10 +897,14 @@ function sessionPopoverHtml() {
     if (s.noGroup) return false;
     return true;
   });
-  let html = `<div class="popover no-print" id="session-popover">
-    <h3>Session</h3>
-    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}</p>
-    <div class="field"><label>Members</label><div class="member-list">`;
+  let html = `<aside class="session-drawer no-print" id="session-popover">
+    <div class="row" style="margin:0 0 8px;justify-content:space-between">
+      <h3>Session editor</h3>
+      <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
+    </div>
+    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}${locked ? ' · 🔒 Locked' : ''}${autoGroup ? ' · Auto-group' : ''}</p>
+    <details class="drawer-sec" open><summary>Members</summary>
+    <div class="member-list">`;
   mates.forEach(m => {
     const cov = review.find(r => r.id === m.studentId);
     const covTxt = cov ? (cov.status + ' · ' + cov.scheduled + '/' + cov.required + ' min') : '';
@@ -713,47 +914,40 @@ function sessionPopoverHtml() {
       ${mates.length > 1 ? `<button type="button" class="ghost danger" onclick="removeFromSession('${esc(m.studentId)}')">Remove</button>` : ''}
     </div>`;
   });
-  html += `</div></div>
-    <div class="field"><label>Add student to this session</label>
+  html += `</div>
+    <div class="field" style="margin-top:10px"><label>Add student</label>
       <div class="row" style="margin:0">
         <select id="add-member" style="max-width:240px"><option value="">Choose…</option>${addOptions.map(s =>
           `<option value="${esc(s.id)}">${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select>
         <button type="button" onclick="addToSession()">Add</button>
-      </div>
-      <p class="meta">Valid only if they are free, under max group size, and not marked No Group. You will get a warning if minutes go over or under.</p>
-    </div>
-    <div class="card-actions">
-      <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
-      <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
-    </div>
-    <div class="field">
-      <label>Move to an open time</label>
+      </div></div></details>
+    <details class="drawer-sec" open><summary>Move to open time</summary>
       <div class="chip-row">`;
   if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
   else {
     const list = found.candidates || [];
-    if (!list.length) html += '<span class="meta">No open slots right now — try a swap below.</span>';
-    list.slice(0, 24).forEach((c, n) => {
+    if (!list.length) html += '<span class="meta">No open slots — try a swap or drag on the calendar.</span>';
+    list.slice(0, 16).forEach((c, n) => {
       html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
     });
-    if (list.length > 24) html += `<span class="meta">+${list.length - 24} more — drag on the calendar to see all valid cells</span>`;
+    if (list.length > 16) html += `<span class="meta">+${list.length - 16} more on calendar (green cells)</span>`;
   }
-  html += `</div></div>
-    <div class="field">
-      <label>Swap with another session</label>
-      <p class="meta">When the week is full, trade places with a group that can take your slot (and vice versa). Drag onto an amber-outlined block to swap.</p>
+  html += `</div></details>
+    <details class="drawer-sec"${(swapsFound.swaps || []).length ? ' open' : ''}><summary>Swap with another session</summary>
+      <p class="meta">Trade places when the week is full. Drop on amber-outlined blocks.</p>
       <div class="chip-row">`;
   if (swapsFound.error) html += `<span class="meta">${esc(swapsFound.error)}</span>`;
   else {
     const swaps = swapsFound.swaps || [];
     if (!swaps.length) html += '<span class="meta">No valid swaps with other unlocked sessions.</span>';
     swaps.forEach((s, n) => {
-      html += `<button type="button" class="chip swap" onclick="applySwap(${n})" title="Trade places">
-        ↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}–${esc(minutesToTimeStr(s.otherEnd))}
-      </button>`;
+      html += `<button type="button" class="chip swap" onclick="applySwap(${n})">↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}</button>`;
     });
   }
-  html += `</div></div></div>`;
+  html += `</div></details>
+    <div class="card-actions">
+      <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
+    </div></aside>`;
   return html;
 }
 
@@ -765,6 +959,7 @@ function addToSession() {
   const check = canAddStudentToSession(engineInput(), row, studentId);
   if (!check.ok) { setStatus(check.error, 'bad'); return; }
   if (check.warning && !confirm(check.warning + '\n\nAdd them anyway?')) return;
+  beginEdit('Add member');
   const s = state.students.find(x => x.id === studentId);
   let gid = String(row.groupId || '').trim();
   if (!gid) {
@@ -794,6 +989,7 @@ function removeFromSession(studentId) {
   const row = state.scheduleLog[altFor];
   const mates = sessionMateRows(state.scheduleLog, row);
   if (mates.length <= 1) { setStatus('Cannot remove the only member.', 'bad'); return; }
+  beginEdit('Remove member');
   const idx = state.scheduleLog.findIndex(r =>
     String(r.studentId) === String(studentId)
     && String(r.week) === String(row.week)
@@ -896,9 +1092,15 @@ function renderWeekBody() {
     <div class="row no-print">
       <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
       <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
+      <button type="button" class="${compactCalendar ? 'primary' : ''}" onclick="compactCalendar=!compactCalendar;render()">Compact calendar</button>
       <button onclick="openPrintOptions()">Print…</button>
       ${undoSnapshot ? `<button type="button" onclick="undoLastGenerate()">Undo generate</button>` : ''}
       <button onclick="exportCsv('schedule')">Export schedule CSV</button>
+    </div>
+    <div class="cal-legend no-print">
+      <span class="leg"><span class="swatch green"></span> Open slot — move here</span>
+      <span class="leg"><span class="swatch amber"></span> Swap — trade places</span>
+      <span class="leg">🔒 Locked · <span class="sess-badge auto">Auto</span> Auto-grouped</span>
     </div>
     ${printOptionsHtml()}
     <div class="row ${printOpts.grades ? '' : 'no-print'}">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
@@ -907,7 +1109,7 @@ function renderWeekBody() {
       rev.map(r => `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${esc(r.status)}</td></tr>`).join('') +
       `</tbody></table></div>`;
   }
-  html += sessionPopoverHtml();
+  html += `<div class="week-layout${altFor != null ? ' drawer-open' : ''}"><div class="week-main">`;
   html += '<div class="week-cals">';
   cal.weekPairs.forEach(pair => {
     pair.forEach(week => {
@@ -915,7 +1117,7 @@ function renderWeekBody() {
       html += `<div class="card cal"><h3>${esc(label)}</h3>${renderWeekGrid(cal, week)}</div>`;
     });
   });
-  html += '</div>';
+  html += '</div></div>' + sessionPopoverHtml() + '</div>';
   return html;
 }
 
@@ -940,7 +1142,7 @@ function renderWeekGrid(cal, week) {
     };
     for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
   });
-  let html = '<div class="cal-grid" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
+  let html = '<div class="cal-grid' + (compactCalendar ? ' compact-cal' : '') + '" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
   html += '<div class="cal-head">Time</div>' + DAYS.map(d => '<div class="cal-head">' + d + '</div>').join('');
   for (let r = 0; r < rows; r++) {
     const slotStart = start + r * inc;
@@ -962,13 +1164,16 @@ function renderWeekGrid(cal, week) {
         } catch (e) { return false; }
       });
       const locked = logIdx >= 0 && String(state.scheduleLog[logIdx].locked).toLowerCase() === 'yes';
+      const autoGroup = c.groupId && String(c.groupId).indexOf('AUTO-GROUP-') === 0;
+      const badges = (locked ? '<span class="sess-badge lock" title="Locked">🔒</span>' : '') +
+        (autoGroup ? '<span class="sess-badge auto">Auto</span>' : '');
       html += `<div class="cal-slot${ok}" style="grid-row: span ${c.span}" data-day="${d}" data-start="${c.start}" data-span="${spanMins}" data-week="${esc(weekLabel)}">
         <div class="sess${isSel ? ' on' : ''}${locked ? ' locked-drag' : ''}"
           draggable="${locked ? 'false' : 'true'}"
           data-log-index="${logIdx}"
           title="${locked ? 'Unlock to drag — click to edit' : 'Drag to a green cell, or click to edit'}"
           onclick="onSessionClick('${esc(c.day)}',${c.start},'${esc(c.studentId)}')"
-          style="background:${c.color.bg};color:${c.color.text}">${c.text}</div>
+          style="background:${c.color.bg};color:${c.color.text}">${badges}${c.text}</div>
       </div>`;
     });
   }
@@ -1061,6 +1266,7 @@ function applyAlt(n) {
   const found = findAlternativeSlots(engineInput(), state.scheduleLog[altFor]);
   const c = found.candidates[n];
   if (!c) return;
+  beginEdit('Move session');
   moveSessionToCandidate(altFor, c);
   refreshLiveReview('Moved session (whole group).');
   altFor = null;
@@ -1074,7 +1280,10 @@ function applySwap(n) {
   const s = found.swaps && found.swaps[n];
   if (!s) return;
   const aName = state.scheduleLog[altFor].name;
+  beginEdit('Swap sessions');
   if (!swapSessionsByIndex(altFor, s.otherIndex)) {
+    editUndoStack.pop();
+    updateEditUndoButtons();
     setStatus('Could not swap those sessions.', 'bad');
     return;
   }
@@ -1207,7 +1416,10 @@ function bindCalendarDnD() {
       dragState = null;
       endDragVisual();
       if (swap) {
+        beginEdit('Swap on calendar');
         if (!swapSessionsByIndex(idx, swap.otherIndex)) {
+          editUndoStack.pop();
+          updateEditUndoButtons();
           setStatus('That swap is not valid.', 'bad');
           return;
         }
@@ -1222,6 +1434,7 @@ function bindCalendarDnD() {
         setStatus('That slot is not valid for this group.', 'bad');
         return;
       }
+      beginEdit('Move on calendar');
       moveSessionToCandidate(idx, cand);
       altFor = state.scheduleLog.findIndex(r =>
         String(r.studentId) === String(studentId) && r.day === cand.day &&
@@ -1251,9 +1464,11 @@ function renderReviewBody() {
   const rows = reviewRows();
   if (!rows.length) return '<p class="lede">Generate a schedule to see required vs placed minutes.</p>';
   const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
-  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th></tr></thead><tbody>`;
+  const hasCal = (state.scheduleLog || []).length > 0;
+  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes. Use <b>Calendar</b> to jump to a session on the week view.</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th>${hasCal ? '<th></th>' : ''}</tr></thead><tbody>`;
   rows.forEach(r => {
-    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td></tr>`;
+    const onCal = hasCal && (state.scheduleLog || []).some(row => String(row.studentId) === String(r.id));
+    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td>${hasCal ? `<td>${onCal ? `<button type="button" class="ghost" onclick="jumpToStudentSession('${esc(r.id)}')">Calendar</button>` : '<span class="meta">—</span>'}</td>` : ''}</tr>`;
   });
   return html + '</tbody></table>';
 }
@@ -1261,6 +1476,7 @@ function renderReviewBody() {
 function toggleLock(i) {
   const row = state.scheduleLog[i];
   if (!row) return;
+  beginEdit('Toggle lock');
   const on = String(row.locked).toLowerCase() === 'yes';
   const mates = sessionMateRows(state.scheduleLog, row);
   mates.forEach(r => { r.locked = on ? '' : 'Yes'; });
@@ -1379,6 +1595,7 @@ function studentCardsHtml(list) {
       <div class="meta" style="margin-top:8px">${blockBits}</div>
       <div class="row" style="margin:10px 0 0">
         <button onclick="event.stopPropagation();openStudentForm(${idx})">Edit</button>
+        ${(state.scheduleLog || []).some(row => String(row.studentId) === String(s.id)) ? `<button onclick="event.stopPropagation();jumpToStudentSession('${esc(s.id)}')">On calendar</button>` : ''}
         <button onclick="event.stopPropagation();duplicateStudent(${idx})">Duplicate</button>
         <button class="ghost danger" onclick="event.stopPropagation();removeStudent(${idx})">Remove</button>
       </div>
@@ -1675,14 +1892,18 @@ function renderSetup() {
 
 function renderFiles() {
   return `<h1>Import / export</h1>
-    <p class="lede">The live workspace auto-saves in this browser. JSON is the full file (settings + caseload + schedule). CSV is one table at a time.</p>
-    <div class="drop" id="drop">Drop a .json or .csv here, or <button onclick="pickFile()">choose a file</button></div>
+    <p class="lede">Workspace auto-saves in this browser. Import a full Google Sheet export (.xlsx), multiple tab CSVs, workspace JSON, or a single CSV table. Apps Script column labels (Students, MyAvailability, Schedule_Log, …) are recognized automatically.</p>
+    <div class="drop" id="drop">Drop <b>.xlsx</b> workbook, <b>.json</b>, or <b>.csv</b> (one or many) — or <button onclick="pickFile()">choose files</button></div>
     <div class="row">
       <label style="margin:0;font-weight:600">CSV import</label>
       <select style="width:auto" onchange="csvImportMode=this.value">
         <option value="replace" ${csvImportMode==='replace'?'selected':''}>Replace this table</option>
         <option value="merge" ${csvImportMode==='merge'?'selected':''}>Merge (match students by ID)</option>
       </select>
+    </div>
+    <div class="card"><h3>From Google Sheets</h3>
+      <p class="meta">In your Apps Script workbook: <b>File → Download → Microsoft Excel (.xlsx)</b>, then drop that file here. Input tabs imported: Students, Grades, Constraints, MyAvailability, Settings, Schedule_Log (if present). Output-only tabs (Review, Open_Slots, Printable) are skipped.</p>
+      <p class="meta">Or export each input tab as CSV (use the tab name in the filename) and drop all CSVs at once.</p>
     </div>
     <div class="row">
       <button class="primary" onclick="exportWorkspace()">Download workspace.json</button>
@@ -1696,12 +1917,13 @@ function renderFiles() {
       <button onclick="state=sampleWorkspace();caseloadDirty=false;persist();render();setStatus('Sample caseload loaded.','ok')">Reset to sample</button>
       <button onclick="if(confirm('Clear the whole workspace?')){state=blankWorkspace();caseloadDirty=false;persist();render();setStatus('Cleared.','ok')}">Start empty</button>
     </div>
-    <div class="card"><h3>CSV headers</h3>
+    <div class="card"><h3>CSV headers (web export)</h3>
       <p class="meta"><b>students:</b> ${CSV_SCHEMAS.students.join(', ')}</p>
       <p class="meta"><b>availability:</b> ${CSV_SCHEMAS.availability.join(', ')}</p>
       <p class="meta"><b>grades:</b> ${CSV_SCHEMAS.grades.join(', ')}</p>
       <p class="meta"><b>constraints:</b> ${CSV_SCHEMAS.constraints.join(', ')}</p>
       <p class="meta"><b>schedule:</b> ${CSV_SCHEMAS.schedule.join(', ')}</p>
+      <p class="meta">Imports also accept Apps Script header text (e.g. <i>Student ID</i>, <i>Minutes/Week Required (Weekly only)</i>).</p>
     </div>`;
 }
 
@@ -1738,6 +1960,10 @@ function render() {
     drop.ondragleave = () => drop.classList.remove('hot');
     drop.ondrop = (e) => {
       e.preventDefault(); drop.classList.remove('hot');
+      if (e.dataTransfer.files && e.dataTransfer.files.length) {
+        handleFileList(e.dataTransfer.files);
+        return;
+      }
       const f = e.dataTransfer.files[0];
       if (!f) return;
       const reader = new FileReader();
@@ -1747,12 +1973,21 @@ function render() {
   }
   const undoBtn = document.getElementById('undo-btn');
   if (undoBtn) undoBtn.classList.toggle('hidden', !undoSnapshot);
+  updateEditUndoButtons();
   const pop = document.getElementById('session-popover');
-  if (pop) pop.scrollIntoView({ block: 'nearest' });
+  if (pop && altFor != null) pop.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   bindCalendarDnD();
 }
 
 document.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+    e.preventDefault();
+    if (e.shiftKey) redoLastEdit();
+    else undoLastEdit();
+    return;
+  }
   if (e.key === 'Escape') {
     if (dragState) { dragState = null; endDragVisual(); setStatus('Drag cancelled.', 'ok'); return; }
     if (altFor != null) { altFor = null; render(); }

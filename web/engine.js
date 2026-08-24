@@ -1264,8 +1264,252 @@ const CSV_SCHEMAS = {
   availability: ['day','start','end','pattern','notes'],
   grades: ['grade','day','start','end','reason'],
   constraints: ['studentId','day','start','end','reason'],
-  schedule: ['studentId','name','grade','groupId','week','day','start','end','duration','teacher','locked']
+  schedule: ['studentId','name','grade','groupId','week','day','start','end','duration','teacher','locked'],
+  settings: ['setting','value']
 };
+
+/** Normalize sheet/CSV header for fuzzy matching (Apps Script labels included). */
+function normalizeHeaderKey(h) {
+  return String(h || '').trim().toLowerCase()
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[\s_./-]+/g, '');
+}
+
+function csvRowGet(o, ...aliases) {
+  for (let i = 0; i < aliases.length; i++) {
+    const want = normalizeHeaderKey(aliases[i]);
+    const k = Object.keys(o || {}).find(x => normalizeHeaderKey(x) === want || normalizeHeaderKey(x).includes(want));
+    if (k != null && o[k] !== undefined && o[k] !== '') return o[k];
+  }
+  return '';
+}
+
+function normalizeImportedTime(val) {
+  if (val == null || val === '') return '';
+  if (val instanceof Date) return minutesToTimeStr(val.getHours() * 60 + val.getMinutes());
+  if (typeof val === 'number' && val >= 0 && val < 1) {
+    return minutesToTimeStr(Math.round(val * 24 * 60));
+  }
+  return String(val).trim();
+}
+
+/** Apps Script Week Pattern: blank = every week, or A / B only. */
+function normalizeImportedPattern(val) {
+  const raw = String(val || '').trim().toUpperCase();
+  if (!raw || raw === 'ALL' || raw === 'BOTH' || raw.indexOf('BOTH') >= 0) return '';
+  if (raw === 'A' || raw === 'B') return raw;
+  return '';
+}
+
+const SHEET_KIND_ALIASES = {
+  students: ['students'],
+  availability: ['myavailability', 'availability', 'hours'],
+  grades: ['grades'],
+  constraints: ['constraints', 'studentblocks', 'blocks'],
+  settings: ['settings'],
+  schedule: ['schedulelog', 'log']
+};
+
+function sheetNameToKind(sheetName) {
+  const n = normalizeHeaderKey(sheetName);
+  if (!n || n === 'readme' || n.includes('printable') || n.includes('openslots') || n.includes('review')) return null;
+  const keys = Object.keys(SHEET_KIND_ALIASES);
+  for (let i = 0; i < keys.length; i++) {
+    const kind = keys[i];
+    if (SHEET_KIND_ALIASES[kind].some(a => n === a || n.includes(a))) return kind;
+  }
+  return null;
+}
+
+function detectCsvKind(headers, filename) {
+  const fn = normalizeHeaderKey(String(filename || '').replace(/\.[^.]+$/, ''));
+  if (fn.includes('student') && !fn.includes('constraint')) return 'students';
+  if (fn === 'myavailability' || fn === 'availability' || fn === 'hours') return 'availability';
+  if (fn === 'grades') return 'grades';
+  if (fn === 'constraints' || fn === 'blocks') return 'constraints';
+  if (fn === 'settings') return 'settings';
+  if (fn.includes('schedule') || fn === 'log') return 'schedule';
+
+  const keys = (headers || []).map(normalizeHeaderKey);
+  const has = (needle) => keys.some(k => k === needle || k.includes(needle));
+  if (has('setting') && has('value') && keys.length <= 4) return 'settings';
+  if (has('studentid') && (has('firstname') || has('lastname'))) return 'students';
+  if ((has('locked') || has('duration')) && has('studentid') && has('week')) return 'schedule';
+  if (has('studentid') && has('reason') && !has('grade')) return 'constraints';
+  if (has('grade') && has('reason') && !has('studentid')) return 'grades';
+  if ((has('pattern') || has('weekpattern')) && (has('start') || has('starttime'))) return 'availability';
+  if (has('minutesperweek') || has('frequencytype')) return 'students';
+  return null;
+}
+
+function finalizeImportedStudent(s) {
+  const serviceType = String(s.serviceType || 'Individual').trim();
+  const noGroup = truthyFlag(s.noGroup) && serviceType.toLowerCase() !== 'group';
+  const gids = noGroup ? [] : parseGroupIds(s.groupIds || s.groupId || '');
+  return Object.assign({}, s, {
+    groupIds: gids,
+    groupId: gids[0] || '',
+    noGroup,
+    serviceType: serviceType || 'Individual',
+    frequencyType: String(s.frequencyType || 'Weekly').toLowerCase() === 'quarterly' ? 'Quarterly' : 'Weekly',
+    minutesPerWeek: Number(s.minutesPerWeek) || 0,
+    preferredSessionLength: s.preferredSessionLength ? Number(s.preferredSessionLength) : '',
+    sessionsPerQuarter: Number(s.sessionsPerQuarter) || 0,
+    quarterlySessionLength: Number(s.quarterlySessionLength) || 0,
+    status: String(s.status || 'Active').trim() || 'Active',
+    notes: s.notes || '',
+    teacher: s.teacher || '',
+    fixedDay: s.fixedDay || '',
+    fixedStart: s.fixedStart || '',
+  });
+}
+
+function normalizeImportedStudent(o) {
+  const get = (...keys) => csvRowGet(o, ...keys);
+  return finalizeImportedStudent({
+    id: get('id', 'studentId', 'Student ID'),
+    firstName: get('firstName', 'First Name', 'first'),
+    lastName: get('lastName', 'Last Name', 'last'),
+    grade: get('grade', 'Grade'),
+    serviceType: get('serviceType', 'Service Type') || 'Individual',
+    groupId: get('groupId', 'Group ID', 'groupIds', 'Group IDs'),
+    groupIds: get('groupIds', 'Group IDs', 'groupId', 'Group ID'),
+    noGroup: get('noGroup', 'No Group', 'NoGroup'),
+    frequencyType: get('frequencyType', 'Frequency Type') || 'Weekly',
+    minutesPerWeek: get('minutesPerWeek', 'Minutes/Week', 'Minutes/Week Required'),
+    preferredSessionLength: get('preferredSessionLength', 'Preferred Session Length'),
+    sessionsPerQuarter: get('sessionsPerQuarter', 'Sessions Per Quarter'),
+    quarterlySessionLength: get('quarterlySessionLength', 'Session Length', 'Session Length (Quarterly)'),
+    notes: get('notes', 'Notes'),
+    status: get('status', 'Status') || 'Active',
+    teacher: get('teacher', 'Teacher'),
+    fixedDay: get('fixedDay', 'Fixed Day'),
+    fixedStart: get('fixedStart', 'Fixed Start Time', 'fixedStartTime'),
+  });
+}
+
+function normalizeImportedAvailability(o) {
+  return {
+    day: csvRowGet(o, 'day', 'Day'),
+    start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
+    end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
+    pattern: normalizeImportedPattern(csvRowGet(o, 'pattern', 'Week Pattern', 'Pattern')),
+    notes: csvRowGet(o, 'notes', 'Notes') || '',
+  };
+}
+
+function normalizeImportedGrade(o) {
+  return {
+    grade: csvRowGet(o, 'grade', 'Grade'),
+    day: csvRowGet(o, 'day', 'Day'),
+    start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
+    end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
+    reason: csvRowGet(o, 'reason', 'Reason') || '',
+  };
+}
+
+function normalizeImportedConstraint(o) {
+  return {
+    studentId: csvRowGet(o, 'studentId', 'Student ID'),
+    day: csvRowGet(o, 'day', 'Day'),
+    start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
+    end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
+    reason: csvRowGet(o, 'reason', 'Reason') || '',
+  };
+}
+
+function normalizeImportedScheduleRow(o) {
+  const dur = csvRowGet(o, 'duration', 'Duration');
+  return {
+    studentId: csvRowGet(o, 'studentId', 'Student ID'),
+    name: csvRowGet(o, 'name', 'Name'),
+    grade: csvRowGet(o, 'grade', 'Grade'),
+    groupId: csvRowGet(o, 'groupId', 'Group ID'),
+    week: csvRowGet(o, 'week', 'Week'),
+    day: csvRowGet(o, 'day', 'Day'),
+    start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
+    end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
+    duration: dur !== '' ? Number(dur) : Number(csvRowGet(o, 'Duration (min)', 'Duration (minutes)')) || '',
+    teacher: csvRowGet(o, 'teacher', 'Teacher') || '',
+    locked: csvRowGet(o, 'locked', 'Locked') || '',
+  };
+}
+
+function settingsFromImportRows(rows) {
+  const patch = {};
+  (rows || []).forEach(r => {
+    const key = String(csvRowGet(r, 'setting', 'Setting') || '').trim();
+    const val = csvRowGet(r, 'value', 'Value');
+    if (!key) return;
+    if (key.indexOf('Slot Increment') >= 0) patch.slotIncrement = Number(val) || 5;
+    else if (key === 'School Days') patch.schoolDays = String(val).split(',').map(d => d.trim());
+    else if (key.indexOf('Min Session Length') >= 0) patch.minSessionLength = Number(val) || 15;
+    else if (key.indexOf('Max Session Length') >= 0) patch.maxSessionLength = Number(val) || 60;
+    else if (key.indexOf('Weeks Per Quarter') >= 0) patch.weeksPerQuarter = Math.max(1, Number(val) || 9);
+    else if (key.indexOf('Starting Week Pattern') >= 0) patch.startingWeekPattern = String(val).trim().toUpperCase() === 'B' ? 'B' : 'A';
+    else if (key.indexOf('Group Rescue Extra Minutes') >= 0) patch.groupRescueExtraMinutes = Math.max(0, Number(val) || 0);
+    else if (key.indexOf('Max Students Per Auto-Group') >= 0) patch.maxGroupSize = Math.max(2, Number(val) || 2);
+    else if (key.indexOf('Prefer Consistent Weekly Pattern') >= 0) patch.preferConsistentPattern = String(val).trim().toLowerCase() !== 'no';
+    else if (key.indexOf('Show Teacher on Schedule') >= 0) patch.showTeacherInfo = String(val).trim().toLowerCase() !== 'no';
+    else if (key.indexOf('Front-Load First Sessions') >= 0) patch.frontLoadFirstSessions = String(val).trim().toLowerCase() !== 'no';
+  });
+  return patch;
+}
+
+/** Normalize raw sheet/CSV rows for one table kind. */
+function importTableRows(kind, rawRows) {
+  const rows = rawRows || [];
+  if (kind === 'students') return rows.map(normalizeImportedStudent);
+  if (kind === 'availability') return rows.map(normalizeImportedAvailability).filter(r => r.day && r.start && r.end);
+  if (kind === 'grades') return rows.map(normalizeImportedGrade).filter(r => r.grade && r.day);
+  if (kind === 'constraints') return rows.map(normalizeImportedConstraint).filter(r => r.studentId && r.day);
+  if (kind === 'schedule') return rows.map(normalizeImportedScheduleRow).filter(r => r.studentId && r.day);
+  if (kind === 'settings') return settingsFromImportRows(rows);
+  return rows;
+}
+
+/**
+ * Merge imported tables (from workbook or multi-CSV) into a workspace object.
+ * imports: { students?: [], availability?: [], ... settings?: [] }
+ */
+function applyWorkbookImports(workspace, imports, opts) {
+  opts = opts || {};
+  const merge = !!opts.merge;
+  const w = workspace || { settings: {}, students: [], availability: [], grades: [], constraints: [], scheduleLog: [] };
+
+  if (imports.students && imports.students.length) {
+    const incoming = importTableRows('students', imports.students);
+    w.students = merge ? mergeImportBy(w.students, incoming, r => r.id) : incoming;
+  }
+  if (imports.availability && imports.availability.length) {
+    const incoming = importTableRows('availability', imports.availability);
+    w.availability = merge ? mergeImportBy(w.availability, incoming, r => [r.day, r.start, r.end, r.pattern].join('|')) : incoming;
+  }
+  if (imports.grades && imports.grades.length) {
+    const incoming = importTableRows('grades', imports.grades);
+    w.grades = merge ? mergeImportBy(w.grades, incoming, r => [r.grade, r.day, r.start, r.end].join('|')) : incoming;
+  }
+  if (imports.constraints && imports.constraints.length) {
+    const incoming = importTableRows('constraints', imports.constraints);
+    w.constraints = merge ? mergeImportBy(w.constraints, incoming, r => [r.studentId, r.day, r.start, r.end].join('|')) : incoming;
+  }
+  if (imports.schedule && imports.schedule.length) {
+    w.scheduleLog = importTableRows('schedule', imports.schedule);
+    w.lastRun = w.lastRun || { at: new Date().toISOString() };
+  }
+  if (imports.settings && imports.settings.length) {
+    const patch = importTableRows('settings', imports.settings);
+    w.settings = buildSettings(Object.assign({}, w.settings || {}, patch));
+  }
+  return w;
+}
+
+function mergeImportBy(existing, incoming, keyFn) {
+  const map = {};
+  (existing || []).forEach(r => { map[keyFn(r)] = r; });
+  (incoming || []).forEach(r => { map[keyFn(r)] = Object.assign({}, map[keyFn(r)] || {}, r); });
+  return Object.values(map);
+}
 
 function parseCsv(text) {
   const rows = [];
@@ -1310,46 +1554,6 @@ function objectsToCsv(objs, columns) {
   return toCsv([cols].concat((objs || []).map(o => cols.map(c => o[c] != null ? o[c] : ''))));
 }
 
-function detectCsvKind(headers) {
-  const h = headers.map(x => x.toLowerCase());
-  if (h.includes('minutesperweek') || h.includes('frequencytype') || h.includes('firstname')) return 'students';
-  if (h.includes('pattern') && h.includes('start')) return 'availability';
-  if (h.includes('reason') && h.includes('grade')) return 'grades';
-  if (h.includes('studentid') && h.includes('reason')) return 'constraints';
-  if (h.includes('locked') || h.includes('duration')) return 'schedule';
-  return null;
-}
-
-function normalizeImportedStudent(o) {
-  const get = (...keys) => {
-    for (let i = 0; i < keys.length; i++) {
-      const k = Object.keys(o).find(x => x.toLowerCase().replace(/[\s_]/g,'') === keys[i].toLowerCase().replace(/[\s_]/g,''));
-      if (k && o[k] !== undefined && o[k] !== '') return o[k];
-    }
-    return '';
-  };
-  return {
-    id: get('id', 'studentId', 'Student ID'),
-    firstName: get('firstName', 'First Name', 'first'),
-    lastName: get('lastName', 'Last Name', 'last'),
-    grade: get('grade'),
-    serviceType: get('serviceType', 'Service Type') || 'Individual',
-    groupId: get('groupId', 'Group ID', 'groupIds', 'Group IDs'),
-    groupIds: get('groupIds', 'Group IDs', 'groupId', 'Group ID'),
-    noGroup: get('noGroup', 'No Group', 'NoGroup'),
-    frequencyType: get('frequencyType', 'Frequency Type') || 'Weekly',
-    minutesPerWeek: get('minutesPerWeek', 'Minutes/Week'),
-    preferredSessionLength: get('preferredSessionLength', 'Preferred Session Length'),
-    sessionsPerQuarter: get('sessionsPerQuarter', 'Sessions Per Quarter'),
-    quarterlySessionLength: get('quarterlySessionLength', 'Session Length (Quarterly)'),
-    notes: get('notes'),
-    status: get('status') || 'Active',
-    teacher: get('teacher'),
-    fixedDay: get('fixedDay', 'Fixed Day'),
-    fixedStart: get('fixedStart', 'Fixed Start Time', 'fixedStartTime'),
-  };
-}
-
 if (typeof window !== 'undefined') {
   window.DEFAULT_SETTINGS = DEFAULT_SETTINGS;
   window.CSV_SCHEMAS = CSV_SCHEMAS;
@@ -1360,8 +1564,10 @@ if (typeof module !== 'undefined' && module.exports) {
     DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
     computeOpenSlots, findAlternativeSlots, findSwapCandidates, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
+    normalizeHeaderKey, csvRowGet, sheetNameToKind, importTableRows, applyWorkbookImports,
+    mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
-    sessionMateRows, sessionKeyFromLogRow, findAlternativeSlots, findSwapCandidates, reviewFromScheduleLog,
+    sessionMateRows, sessionKeyFromLogRow, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
   };
 }
