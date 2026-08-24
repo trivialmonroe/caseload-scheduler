@@ -965,7 +965,7 @@ function pickDiverseCandidates(candidates, limit) {
   return out;
 }
 
-function buildCalendarModel(logRows, settings, showAllWeeks) {
+function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   settings = buildSettings(settings);
   const sessions = (logRows || []).map(r => ({
     grade: String(r.grade || '').trim(),
@@ -1006,7 +1006,18 @@ function buildCalendarModel(logRows, settings, showAllWeeks) {
   }
   let minStart = Infinity, maxEnd = -Infinity;
   entries.forEach(e => { minStart = Math.min(minStart, e.start); maxEnd = Math.max(maxEnd, e.end); });
+  // Expand to provider hours so empty cells exist for drag-and-drop across the day.
+  (availability || []).forEach(a => {
+    try {
+      minStart = Math.min(minStart, timeStrToMinutes(a.start));
+      maxEnd = Math.max(maxEnd, timeStrToMinutes(a.end));
+    } catch (e) {}
+  });
   if (!isFinite(minStart)) { minStart = timeStrToMinutes('8:00 AM'); maxEnd = timeStrToMinutes('3:00 PM'); }
+  else {
+    minStart = Math.min(minStart, timeStrToMinutes('8:00 AM'));
+    maxEnd = Math.max(maxEnd, timeStrToMinutes('3:00 PM'));
+  }
   minStart = Math.floor(minStart / 15) * 15;
   maxEnd = Math.ceil(maxEnd / 15) * 15;
   const inc = 15;

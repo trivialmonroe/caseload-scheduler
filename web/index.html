@@ -852,7 +852,7 @@ function renderWeekBody() {
         <button onclick="pickFile()">Open JSON / CSV</button>
       </div>`;
   }
-  const cal = buildCalendarModel(log, state.settings, showAllWeeks);
+  const cal = buildCalendarModel(log, state.settings, showAllWeeks, state.availability);
   let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered.</p>
     <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it (everyone in the group moves together). Click a block to lock or edit members. Coverage is a report tab — edits happen on this calendar. Locked groups stay put when you regenerate.</p>
     ${coverageBannerHtml()}
