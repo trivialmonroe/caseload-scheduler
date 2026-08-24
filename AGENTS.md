@@ -27,8 +27,9 @@ This repo ships **two products** that share a scheduling algorithm:
 
 ### Google Apps Script version
 
-- Sources moved to `apps-script/` (including `appsscript.json` and `StudentForm.html`).
-- No package manager, build, or automated tests.
+- Sources live in `apps-script/` (including `appsscript.json` and `StudentForm.html`).
+- No package manager, build, or automated tests for Sheets. Optional local check: `node dev/run-engine.js` (stubs SpreadsheetApp, runs `generateSchedule()` on sample data).
+- Web import/edge regressions: `node web/adversarial.test.js`.
 - `clasp` (optional) should run from `apps-script/`. Login is interactive, not headless.
 
 `standalone/CaseloadScheduler.html` redirects to `web/index.html`.
