@@ -74,13 +74,14 @@
     h1 { font-size: 1.4rem; margin: 0 0 4px; letter-spacing: -.02em; }
     .lede { color: var(--muted); margin: 0 0 18px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
     .card {
       background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-      padding: 14px; box-shadow: var(--shadow);
+      padding: 16px; box-shadow: var(--shadow);
     }
-    .card h3 { margin: 0 0 4px; font-size: 1rem; }
+    .card h3 { margin: 0 0 8px; font-size: 1rem; }
     .meta { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .stack { display: flex; flex-direction: column; gap: 14px; }
     .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #f5f5f4; margin-right: 4px; }
     .pill.teal { background: #ccfbf1; color: #115e59; }
     .pill.warn { background: #ffedd5; color: #9a3412; }
@@ -94,16 +95,16 @@
     tr.under td { background: #fef2f2; }
     tr.met td { background: #f0fdf4; }
     tr.auto td { background: #f5f3ff; }
-    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 4px; }
     .chip {
-      border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; font-size: 12px; background: #fff; cursor: pointer;
+      border: 1px solid var(--line); border-radius: 99px; padding: 5px 11px; font-size: 12px; background: #fff; cursor: pointer;
     }
     .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
     input, select, textarea {
       font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; background: #fff;
     }
-    label { font-size: 12px; font-weight: 600; display: block; margin: 8px 0 4px; }
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    label { font-size: 12px; font-weight: 600; display: block; margin: 0 0 6px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; align-items: start; }
     .modal-bg {
       position: fixed; inset: 0; background: rgba(28,25,23,.4); display: flex; align-items: center; justify-content: center; z-index: 50;
     }
@@ -128,15 +129,42 @@
     .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
     .stale {
       background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
-      padding: 10px 12px; border-radius: 10px; margin-bottom: 14px; font-size: 13px;
+      padding: 10px 12px; border-radius: 10px; margin-bottom: 16px; font-size: 13px;
     }
-    .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+    .setup-col { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+    .setup-col h2 { margin: 0; font-size: 1.12rem; letter-spacing: -.02em; }
+    .setup-col > .meta { margin: 0; }
+    .setup-col > .row { margin: 0; }
+    @media (min-width: 981px) {
+      .setup-col + .setup-col { border-left: 1px solid var(--line); padding-left: 28px; }
+    }
+    .wizard {
+      background: #fff; border: 1px solid var(--line); border-radius: 12px;
+      padding: 16px 18px; margin-bottom: 18px; box-shadow: var(--shadow);
+    }
+    .wizard h3 { margin: 0 0 6px; font-size: 1rem; }
+    .wizard .meta { margin: 0 0 4px; }
+    .wizard ol { margin: 10px 0 0; padding-left: 20px; }
+    .wizard li { margin: 8px 0; }
+    .wizard li.done { color: var(--ok); }
+    .wizard .card-actions { margin-top: 12px; }
+    .popover {
+      position: relative; z-index: 40; background: #fff; border: 1px solid var(--line);
+      border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); margin: 0 0 18px; max-width: 720px;
+    }
+    .popover h3 { margin: 0 0 6px; }
+    .card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .field { margin-top: 12px; }
+    .week-cals, .open-grids { display: flex; flex-direction: column; gap: 20px; }
+    .card.cal h3 { margin: 0 0 12px; }
+    .sess.on { outline: 2px solid var(--ink); outline-offset: 1px; }
     .mob-nav { display: none; }
     .card.student { cursor: pointer; }
     .card.student:hover { border-color: #d6d3d1; }
     .modal { width: min(680px, 94vw); }
-    .modal-sec { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
-    .block-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 8px; background: #fafaf9; }
+    .modal-sec { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 16px; }
+    .block-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; background: #fafaf9; }
     .pill.ok { background: #dcfce7; color: #166534; }
     .pill.bad { background: #fee2e2; color: #b91c1c; }
     .pill.warn { background: #ffedd5; color: #9a3412; }
@@ -147,9 +175,15 @@
     .sess { cursor: pointer; }
     .sess:hover { filter: brightness(1.08); }
     @media print {
-      aside, .top, .no-print, .mob-nav, .tabs { display: none !important; }
+      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover { display: none !important; }
       body { display: block; background: #fff; }
       main { padding: 0; }
+      .week-cals { gap: 24px; }
+      .card.cal { break-inside: avoid; box-shadow: none; }
+      body.print-week h1,
+      body.print-week .lede,
+      body.print-week .stat-grid,
+      body.print-week .row { display: none !important; }
     }
     @media (max-width: 980px) {
       .setup-grid { grid-template-columns: 1fr; }
@@ -175,6 +209,7 @@
     <div class="status" id="status">Ready</div>
     <button type="button" onclick="validateNow()">Check</button>
     <button type="button" class="primary" onclick="generateNow()">Generate schedule</button>
+    <button type="button" id="undo-btn" class="hidden" onclick="undoLastGenerate()">Undo generate</button>
   </div>
   <aside>
     <div class="sec">Caseload</div>
@@ -208,6 +243,7 @@ let altFor = null;
 let studentQuery = '';
 let csvImportMode = 'replace';
 let caseloadDirty = false;
+let undoSnapshot = null;
 
 function blankWorkspace() {
   return {
@@ -262,9 +298,8 @@ function persistCaseload() {
 function hydrate() {
   try {
     const raw = localStorage.getItem(STORE);
-    if (raw) state = Object.assign(blankWorkspace(), JSON.parse(raw));
+    if (raw != null) state = Object.assign(blankWorkspace(), JSON.parse(raw));
   } catch (e) {}
-  if (!state.students.length && !state.availability.length) state = sampleWorkspace();
 }
 
 function setStatus(msg, kind) {
@@ -346,16 +381,26 @@ function staleBanner() {
   return `<div class="stale no-print">Caseload changed since the last generate. <button class="primary" onclick="generateNow()">Generate again</button></div>`;
 }
 
+function snapshotSchedule() {
+  return {
+    scheduleLog: JSON.parse(JSON.stringify(state.scheduleLog || [])),
+    lastRun: state.lastRun ? JSON.parse(JSON.stringify(state.lastRun)) : null,
+    caseloadDirty: caseloadDirty,
+  };
+}
+
 function generateNow() {
   const issues = validateCaseload(state);
   if (issues.length) {
-    if (!confirm(issues.length + ' issue(s). First:\\n' + issues[0] + '\\n\\nGenerate anyway?')) {
+    if (!confirm(issues.length + ' issue(s). First:\n' + issues[0] + '\n\nGenerate anyway?')) {
       setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
       return;
     }
   }
+  const prev = snapshotSchedule();
   const result = runSchedulingEngine(engineInput());
   if (result.error) { setStatus(result.error, 'bad'); return; }
+  undoSnapshot = prev;
   state.scheduleLog = result.logRows;
   state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
   caseloadDirty = false;
@@ -363,6 +408,57 @@ function generateNow() {
   setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
   scheduleTab = 'week';
   showView('schedule');
+}
+
+function undoLastGenerate() {
+  if (!undoSnapshot) return;
+  state.scheduleLog = undoSnapshot.scheduleLog;
+  state.lastRun = undoSnapshot.lastRun;
+  caseloadDirty = undoSnapshot.caseloadDirty;
+  undoSnapshot = null;
+  persist();
+  setStatus('Restored the previous schedule.', 'ok');
+  render();
+}
+
+function loadSampleAndGenerate() {
+  state = sampleWorkspace();
+  caseloadDirty = false;
+  persist();
+  generateNow();
+}
+
+function setupProgress() {
+  return {
+    hours: (state.availability || []).length > 0,
+    grades: (state.grades || []).length > 0,
+    students: (state.students || []).length > 0,
+  };
+}
+
+function needsOnboarding() {
+  const p = setupProgress();
+  return !p.hours || !p.grades || !p.students;
+}
+
+function wizardHtml() {
+  if (!needsOnboarding()) return '';
+  const p = setupProgress();
+  const item = (done, todo, doneText) => done
+    ? '<li class="done">' + doneText + '</li>'
+    : '<li>' + todo + '</li>';
+  return `<div class="wizard no-print">
+    <h3>Get a schedule in three steps</h3>
+    <p class="meta">Hours, then grade lunches, then students. Or load the sample caseload to see a finished week.</p>
+    <ol>
+      ${item(p.hours, '<a href="#" onclick="showView(\'setup\');return false">Add your working hours</a>', 'Hours added.')}
+      ${item(p.grades, '<a href="#" onclick="showView(\'setup\');return false">Add lunch / recess for each grade</a>', 'Grade blocks added.')}
+      ${item(p.students, '<a href="#" onclick="showView(\'students\');return false">Add your first student</a>', 'Students added.')}
+    </ol>
+    <div class="card-actions">
+      <button type="button" class="primary" onclick="loadSampleAndGenerate()">Load sample caseload</button>
+    </div>
+  </div>`;
 }
 
 function validateNow() {
@@ -470,12 +566,52 @@ function renderSchedule() {
   return html + renderWeekBody();
 }
 
+function sessionPopoverHtml() {
+  if (altFor == null || !state.scheduleLog[altFor]) return '';
+  const row = state.scheduleLog[altFor];
+  const locked = String(row.locked).toLowerCase() === 'yes';
+  const found = findAlternativeSlots(engineInput(), row);
+  let html = `<div class="popover no-print" id="session-popover">
+    <h3>${esc(row.name)}</h3>
+    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}${row.teacher ? '<br>' + esc(row.teacher) : ''}</p>
+    <div class="card-actions">
+      <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
+      <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
+    </div>
+    <div class="field">
+      <label>Move to another time</label>
+      <div class="chip-row">`;
+  if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
+  else {
+    const list = found.candidates || [];
+    if (!list.length) html += '<span class="meta">No other slots fit current locks and blackouts.</span>';
+    list.forEach((c, n) => {
+      html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
+    });
+  }
+  html += `</div></div></div>`;
+  return html;
+}
+
+function closeSessionPopover() {
+  altFor = null;
+  render();
+}
+
+function printWeek() {
+  scheduleTab = 'week';
+  altFor = null;
+  document.body.classList.add('print-week');
+  render();
+  requestAnimationFrame(() => window.print());
+}
+
 function renderWeekBody() {
   const log = state.scheduleLog || [];
   const rev = reviewRows();
   const met = rev.filter(r => r.status === 'Met' || r.status === 'Over').length;
   if (!log.length) {
-    return `<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
+    return `${wizardHtml()}<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
       <div class="row no-print">
         <button class="primary" onclick="state=sampleWorkspace();caseloadDirty=false;persist();generateNow()">Load sample &amp; generate</button>
         <button onclick="pickFile()">Open JSON / CSV</button>
@@ -492,16 +628,20 @@ function renderWeekBody() {
     <div class="row no-print">
       <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
       <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
-      <button onclick="window.print()">Print</button>
+      <button onclick="printWeek()">Print</button>
+      ${undoSnapshot ? `<button type="button" onclick="undoLastGenerate()">Undo generate</button>` : ''}
       <button onclick="exportCsv('schedule')">Export schedule CSV</button>
     </div>
-    <div class="row">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+    <div class="row no-print">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+  html += sessionPopoverHtml();
+  html += '<div class="week-cals">';
   cal.weekPairs.forEach(pair => {
     pair.forEach(week => {
       const label = cal.hasSpecificWeeks ? ('Week ' + week) : 'Weekly';
       html += `<div class="card cal"><h3>${esc(label)}</h3>${renderWeekGrid(cal, week)}</div>`;
     });
   });
+  html += '</div>';
   return html;
 }
 
@@ -509,6 +649,10 @@ function renderWeekGrid(cal, week) {
   const weekLabel = cal.hasSpecificWeeks ? ('Week ' + week) : 'Every Week';
   const inc = cal.inc, start = cal.minStart, rows = cal.rowsCount;
   const cells = {};
+  const selected = altFor != null ? state.scheduleLog[altFor] : null;
+  let selectedStart = null;
+  if (selected) { try { selectedStart = timeStrToMinutes(selected.start); } catch (e) {} }
+
   DAYS.forEach(d => { cells[d] = Array.from({ length: rows }, () => null); });
   cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
     const r0 = Math.max(0, Math.round((e.start - start) / inc));
@@ -526,7 +670,7 @@ function renderWeekGrid(cal, week) {
       const c = cells[d][r];
       if (c === 'skip') return;
       if (!c) { html += '<div></div>'; return; }
-      html += `<div style="grid-row: span ${c.span}"><div class="sess" title="Open session tools" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
+      html += `<div style="grid-row: span ${c.span}"><div class="sess${selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId) ? ' on' : ''}" title="Open session tools" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
     });
   }
   return html + '</div>';
@@ -539,7 +683,7 @@ function openCalendarSession(day, startMins, studentId) {
   });
   if (i < 0) { setStatus('Could not find that session.', 'bad'); return; }
   altFor = i;
-  scheduleTab = 'sessions';
+  scheduleTab = 'week';
   showView('schedule');
 }
 
@@ -636,6 +780,7 @@ function renderOpenBody() {
   const data = computeOpenSlots(engineInput());
   if (data.error) return `<p class="lede">${esc(data.error)}</p>`;
   let html = `<p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
+  html += '<div class="open-grids">';
   data.blocks.forEach(b => {
     html += `<div class="card"><h3>Grade ${esc(b.grade)}${data.hasAlternating ? ' · pattern ' + b.pattern : ''} <span class="meta">${b.openMinutes} open min / week</span></h3>
       <table class="heat"><thead><tr><th>Time</th>${DAYS.map(d => '<th>'+d+'</th>').join('')}</tr></thead><tbody>`;
@@ -647,6 +792,7 @@ function renderOpenBody() {
     });
     html += '</tbody></table></div>';
   });
+  html += '</div>';
   return html;
 }
 
@@ -654,6 +800,7 @@ function renderStudents() {
   const list = state.students.filter(s => !studentQuery || JSON.stringify(s).toLowerCase().includes(studentQuery.toLowerCase()));
   return `<h1>Students</h1>
     <p class="lede">Caseload lives here. OT / resource times sit on each student — not a separate screen.</p>
+    ${wizardHtml()}
     ${staleBanner()}
     <div class="row">
       <input id="q" placeholder="Search name, grade, teacher…" style="max-width:260px" value="${esc(studentQuery)}" oninput="studentQuery=this.value;refreshStudentCards()">
@@ -671,7 +818,7 @@ function refreshStudentCards() {
 }
 
 function studentCardsHtml(list) {
-  if (!list.length) return '<p class="lede">No students match.</p>';
+  if (!list.length) return (!state.students.length) ? '<p class="lede">No students yet. Add one, or load the sample caseload from the steps above.</p>' : '<p class="lede">No students match.</p>';
   return list.map(s => {
     const idx = state.students.indexOf(s);
     const cov = coverageFor(s.id);
@@ -917,38 +1064,39 @@ function addLunchBlock() {
 function renderSetup() {
   return `<h1>Hours &amp; grades</h1>
     <p class="lede">Your working windows, plus grade-level lunch/recess/specials. Student-specific OT or resource times live on the student card.</p>
+    ${wizardHtml()}
     ${staleBanner()}
     <div class="setup-grid">
-      <div>
+      <div class="setup-col">
         <h2>My hours</h2>
         <p class="meta">When you can see students. Leave pattern blank for every week; A/B for alternating.</p>
         <div class="row"><button class="primary" onclick="addWindow('availability')">Add window</button><button onclick="exportCsv('availability')">CSV</button></div>
-        ${state.availability.map((w, i) => `<div class="card"><div class="form-grid">
+        ${`<div class="stack">` + (state.availability.map((w, i) => `<div class="card"><div class="form-grid">
           <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'availability', i)}</div></div>
           <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persistCaseload()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
           <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(w.start))}" onchange="state.availability[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
           <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(w.end))}" onchange="state.availability[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
         </div>
-        <label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persistCaseload()">
-        <div class="row" style="margin:10px 0 0">
+        <div class="field"><label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persistCaseload()"></div>
+        <div class="card-actions">
           <button onclick="copyWindow('availability',${i})">Duplicate</button>
           <button class="ghost danger" onclick="state.availability.splice(${i},1);persistCaseload();render()">Remove</button>
-        </div></div>`).join('') || '<p class="meta">No hours yet.</p>'}
+        </div></div>`).join('') || '<p class="meta">No hours yet — add a window for the days you work.</p>') + `</div>`}
       </div>
-      <div>
+      <div class="setup-col">
         <h2>Grade blocks</h2>
         <p class="meta">Inherited by every student in that grade. Use a student card for one-off conflicts.</p>
         <div class="row"><button class="primary" onclick="addWindow('grades')">Add block</button><button onclick="addLunchBlock()">Add lunch</button><button onclick="exportCsv('grades')">CSV</button></div>
-        ${state.grades.map((g, i) => `<div class="card"><div class="form-grid">
+        ${`<div class="stack">` + (state.grades.map((g, i) => `<div class="card"><div class="form-grid">
           <div><label>Grade</label><input list="grade-list" value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persistCaseload()"></div>
           <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persistCaseload()"></div>
           <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(g.start))}" onchange="state.grades[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
           <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(g.end))}" onchange="state.grades[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
-        </div><label>Days</label><div class="chip-row">${dayChips(g.day, 'grades', i)}</div>
-        <div class="row" style="margin:10px 0 0">
+        </div><div class="field"><label>Days</label><div class="chip-row">${dayChips(g.day, 'grades', i)}</div></div>
+        <div class="card-actions">
           <button onclick="copyWindow('grades',${i})">Duplicate</button>
           <button class="ghost danger" onclick="state.grades.splice(${i},1);persistCaseload();render()">Remove</button>
-        </div></div>`).join('') || '<p class="meta">No grade blocks yet.</p>'}
+        </div></div>`).join('') || '<p class="meta">No grade blocks yet — start with lunch for each grade you serve.</p>') + `</div>`}
         <datalist id="grade-list">${knownGrades().map(g => `<option value="${esc(g)}">`).join('')}</datalist>
       </div>
     </div>`;
@@ -1026,10 +1174,24 @@ function render() {
       reader.readAsText(f);
     };
   }
+  const undoBtn = document.getElementById('undo-btn');
+  if (undoBtn) undoBtn.classList.toggle('hidden', !undoSnapshot);
+  const pop = document.getElementById('session-popover');
+  if (pop) pop.scrollIntoView({ block: 'nearest' });
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && altFor != null) { altFor = null; render(); }
+});
+window.addEventListener('afterprint', () => {
+  if (!document.body.classList.contains('print-week')) return;
+  document.body.classList.remove('print-week');
+  render();
+});
 
 hydrate();
 render();
+
 </script>
 </body>
 </html>
