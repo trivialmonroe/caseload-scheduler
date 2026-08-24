@@ -12,8 +12,10 @@ This repo ships **two products** that share a scheduling algorithm:
 ### Web app (preferred for local verification)
 
 - No install. Keep `engine.js` next to `index.html`.
-- Click **Load sample caseload** (empty state) or **Generate schedule**. Workspace auto-saves in `localStorage`.
-- Import/export: full **workspace JSON**, or per-table **CSV** (students, hours, grades, blocks, schedule).
+- Click **Load sample caseload** (empty state on the Schedule screen) or **Generate schedule**. Workspace auto-saves in `localStorage`.
+- Five screens: Students, Hours & grades, Week & coverage (tabbed), Import / export, Settings. Student OT/resource blocks live on the student card, not a separate page. Day chips auto-save; times use `<input type="time">`.
+- Import/export: full **workspace JSON**, or per-table **CSV** (students, hours, grades, blocks, schedule). CSV import can replace a table or merge by student ID.
+- After caseload edits, a banner on Students / Hours / Schedule prompts regenerate. Generate confirms if `validateCaseload` reports issues.
 - Feature set vs Sheets: generate, coverage, session log with locks, alternate times, open-slot grids, printable week view, student form, validate, A/B hours, weekly + quarterly, groups, auto-group rescue.
 - Algorithm lives in `web/engine.js`. If you change placement rules, also update `apps-script/SchedulingEngine.gs` and `apps-script/DataHelpers.gs`.
 

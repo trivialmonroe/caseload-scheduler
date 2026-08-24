@@ -124,15 +124,47 @@
     }
     .drop.hot { border-color: var(--accent); background: #f0fdfa; }
     .hidden { display: none !important; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+    .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .stale {
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+      padding: 10px 12px; border-radius: 10px; margin-bottom: 14px; font-size: 13px;
+    }
+    .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    .mob-nav { display: none; }
+    .card.student { cursor: pointer; }
+    .card.student:hover { border-color: #d6d3d1; }
+    .modal { width: min(680px, 94vw); }
+    .modal-sec { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+    .block-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 8px; background: #fafaf9; }
+    .pill.ok { background: #dcfce7; color: #166534; }
+    .pill.bad { background: #fee2e2; color: #b91c1c; }
+    .pill.warn { background: #ffedd5; color: #9a3412; }
+    button.danger { color: var(--bad); }
+    details.adv { margin-top: 16px; }
+    details.adv summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+    input[type="time"] { min-height: 38px; }
+    .sess { cursor: pointer; }
+    .sess:hover { filter: brightness(1.08); }
     @media print {
-      aside, .top, .no-print { display: none !important; }
+      aside, .top, .no-print, .mob-nav, .tabs { display: none !important; }
       body { display: block; background: #fff; }
       main { padding: 0; }
     }
+    @media (max-width: 980px) {
+      .setup-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 800px) {
-      body { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
+      body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; grid-template-areas: "top" "mob" "main"; }
       aside { display: none; }
+      .mob-nav {
+        display: flex; grid-area: mob; gap: 6px; padding: 8px 12px; overflow-x: auto;
+        background: #fff; border-bottom: 1px solid var(--line);
+      }
+      .mob-nav button { white-space: nowrap; }
+      .mob-nav button.active { background: #ecfdf8; color: var(--accent); font-weight: 600; }
       .stat-grid { grid-template-columns: 1fr 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -145,20 +177,22 @@
     <button type="button" class="primary" onclick="generateNow()">Generate schedule</button>
   </div>
   <aside>
-    <div class="sec">Schedule</div>
-    <button type="button" class="nav active" data-view="home" onclick="showView('home')">Week view</button>
-    <button class="nav" data-view="review" onclick="showView('review')">Coverage</button>
-    <button class="nav" data-view="sessions" onclick="showView('sessions')">Sessions</button>
-    <button class="nav" data-view="open" onclick="showView('open')">Open slots</button>
     <div class="sec">Caseload</div>
-    <button class="nav" data-view="students" onclick="showView('students')">Students</button>
-    <button class="nav" data-view="hours" onclick="showView('hours')">My hours</button>
-    <button class="nav" data-view="grades" onclick="showView('grades')">Grade blocks</button>
-    <button class="nav" data-view="blocks" onclick="showView('blocks')">Student blocks</button>
+    <button type="button" class="nav active" data-view="students" onclick="showView('students')">Students</button>
+    <button type="button" class="nav" data-view="setup" onclick="showView('setup')">Hours &amp; grades</button>
+    <div class="sec">Schedule</div>
+    <button type="button" class="nav" data-view="schedule" onclick="showView('schedule')">Week &amp; coverage</button>
     <div class="sec">File</div>
-    <button class="nav" data-view="files" onclick="showView('files')">Import / export</button>
-    <button class="nav" data-view="settings" onclick="showView('settings')">Settings</button>
+    <button type="button" class="nav" data-view="files" onclick="showView('files')">Import / export</button>
+    <button type="button" class="nav" data-view="settings" onclick="showView('settings')">Settings</button>
   </aside>
+  <nav class="mob-nav">
+    <button type="button" data-view="students" onclick="showView('students')">Students</button>
+    <button type="button" data-view="setup" onclick="showView('setup')">Hours &amp; grades</button>
+    <button type="button" data-view="schedule" onclick="showView('schedule')">Schedule</button>
+    <button type="button" data-view="files" onclick="showView('files')">File</button>
+    <button type="button" data-view="settings" onclick="showView('settings')">Settings</button>
+  </nav>
   <main id="main"></main>
   <input id="filePick" type="file" class="hidden" accept=".json,.csv,text/csv,application/json">
 
@@ -167,9 +201,13 @@
 'use strict';
 
 const STORE = 'caseload.workspace.v2';
-let view = 'home';
+let view = 'students';
+let scheduleTab = 'week';
 let showAllWeeks = false;
 let altFor = null;
+let studentQuery = '';
+let csvImportMode = 'replace';
+let caseloadDirty = false;
 
 function blankWorkspace() {
   return {
@@ -217,6 +255,10 @@ let state = blankWorkspace();
 function persist() {
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
 }
+function persistCaseload() {
+  if ((state.scheduleLog || []).length) caseloadDirty = true;
+  persist();
+}
 function hydrate() {
   try {
     const raw = localStorage.getItem(STORE);
@@ -235,10 +277,11 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 }
 
-function showView(id) {
+function showView(id, tab) {
   view = id;
-  altFor = null;
-  document.querySelectorAll('aside button.nav').forEach(b => b.classList.toggle('active', b.dataset.view === id));
+  if (tab) scheduleTab = tab;
+  if (id !== 'schedule') altFor = null;
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.getAttribute('data-view') === id));
   render();
 }
 
@@ -253,16 +296,73 @@ function engineInput() {
   };
 }
 
+function toTimeInput(display) {
+  try {
+    const m = timeStrToMinutes(display);
+    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  } catch (e) { return ''; }
+}
+function fromTimeInput(value) {
+  if (!value) return '';
+  try { return minutesToTimeStr(timeStrToMinutes(value)); } catch (e) { return value; }
+}
+
+function uniqueValues(arr) {
+  const set = {};
+  arr.forEach(v => { const s = String(v || '').trim(); if (s) set[s] = true; });
+  return Object.keys(set).sort();
+}
+function knownGrades() {
+  return uniqueValues(state.grades.map(g => g.grade).concat(state.students.map(s => s.grade)));
+}
+function knownGroups() {
+  return uniqueValues(state.students.map(s => s.groupId));
+}
+function studentLabel(id) {
+  const s = state.students.find(x => x.id === id);
+  return s ? (s.lastName + ', ' + s.firstName) : (id || 'Unknown');
+}
+function studentNeed(s) {
+  if ((s.frequencyType || 'Weekly') === 'Quarterly') return (s.sessionsPerQuarter || '?') + ' × ' + (s.quarterlySessionLength || '?') + ' min / qtr';
+  return (s.minutesPerWeek || 0) + ' min / week';
+}
+function coverageFor(id) {
+  return reviewRows().find(r => r.id === id);
+}
+function blocksFor(id) {
+  return state.constraints.filter(c => c.studentId === id);
+}
+function suggestId(s) {
+  const last = String(s.lastName || 'X').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 8) || 'X';
+  const first = String(s.firstName || 'X').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 1) || 'X';
+  let n = 1, id;
+  do { id = last + first + String(n).padStart(2, '0'); n += 1; }
+  while (state.students.some(x => x.id === id));
+  return id;
+}
+
+function staleBanner() {
+  if (!caseloadDirty || !(state.scheduleLog || []).length) return '';
+  return `<div class="stale no-print">Caseload changed since the last generate. <button class="primary" onclick="generateNow()">Generate again</button></div>`;
+}
+
 function generateNow() {
   const issues = validateCaseload(state);
-  if (issues.length) { setStatus(issues[0], 'bad'); }
+  if (issues.length) {
+    if (!confirm(issues.length + ' issue(s). First:\\n' + issues[0] + '\\n\\nGenerate anyway?')) {
+      setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
+      return;
+    }
+  }
   const result = runSchedulingEngine(engineInput());
   if (result.error) { setStatus(result.error, 'bad'); return; }
   state.scheduleLog = result.logRows;
   state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
+  caseloadDirty = false;
   persist();
   setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
-  showView('home');
+  scheduleTab = 'week';
+  showView('schedule');
 }
 
 function validateNow() {
@@ -298,10 +398,18 @@ function exportCsv(kind) {
   setStatus('Exported ' + kind + '.csv', 'ok');
 }
 
+function mergeBy(existing, incoming, keyFn) {
+  const map = {};
+  existing.forEach(r => { map[keyFn(r)] = r; });
+  incoming.forEach(r => { map[keyFn(r)] = Object.assign({}, map[keyFn(r)] || {}, r); });
+  return Object.values(map);
+}
+
 function importText(name, text) {
   if (/\.json$/i.test(name) || text.trim().startsWith('{')) {
     const data = JSON.parse(text);
     state = Object.assign(blankWorkspace(), data);
+    caseloadDirty = false;
     persist();
     setStatus('Opened workspace.', 'ok');
     render();
@@ -310,14 +418,28 @@ function importText(name, text) {
   const rows = csvToObjects(text);
   const headers = rows[0] ? Object.keys(rows[0]) : [];
   const kind = detectCsvKind(headers);
-  if (kind === 'students') state.students = rows.map(normalizeImportedStudent);
-  else if (kind === 'availability') state.availability = rows.map(r => ({ day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, pattern: r.pattern || r.Pattern || '', notes: r.notes || r.Notes || '' }));
-  else if (kind === 'grades') state.grades = rows.map(r => ({ grade: r.grade || r.Grade, day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
-  else if (kind === 'constraints') state.constraints = rows.map(r => ({ studentId: r.studentId || r['Student ID'], day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
-  else if (kind === 'schedule') state.scheduleLog = rows;
-  else { setStatus('Could not detect CSV type from headers.', 'bad'); return; }
-  persist();
-  setStatus('Imported ' + kind + ' (' + rows.length + ' rows).', 'ok');
+  const merge = csvImportMode === 'merge';
+  if (kind === 'students') {
+    const incoming = rows.map(normalizeImportedStudent);
+    if (!merge && state.students.length && !confirm('Replace all ' + state.students.length + ' students with this CSV?')) return;
+    state.students = merge ? mergeBy(state.students, incoming, r => r.id) : incoming;
+  } else if (kind === 'availability') {
+    const incoming = rows.map(r => ({ day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, pattern: r.pattern || r.Pattern || '', notes: r.notes || r.Notes || '' }));
+    if (!merge && state.availability.length && !confirm('Replace all hours with this CSV?')) return;
+    state.availability = merge ? mergeBy(state.availability, incoming, r => [r.day, r.start, r.end, r.pattern].join('|')) : incoming;
+  } else if (kind === 'grades') {
+    const incoming = rows.map(r => ({ grade: r.grade || r.Grade, day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
+    if (!merge && state.grades.length && !confirm('Replace all grade blocks with this CSV?')) return;
+    state.grades = merge ? mergeBy(state.grades, incoming, r => [r.grade, r.day, r.start, r.end].join('|')) : incoming;
+  } else if (kind === 'constraints') {
+    const incoming = rows.map(r => ({ studentId: r.studentId || r['Student ID'], day: r.day || r.Day, start: r.start || r.Start, end: r.end || r.End, reason: r.reason || r.Reason || '' }));
+    if (!merge && state.constraints.length && !confirm('Replace all student blocks with this CSV?')) return;
+    state.constraints = merge ? mergeBy(state.constraints, incoming, r => [r.studentId, r.day, r.start, r.end].join('|')) : incoming;
+  } else if (kind === 'schedule') {
+    state.scheduleLog = rows;
+  } else { setStatus('Could not detect CSV type from headers.', 'bad'); return; }
+  persistCaseload();
+  setStatus((merge && kind !== 'schedule' ? 'Merged ' : 'Imported ') + kind + ' (' + rows.length + ' rows).', 'ok');
   render();
 }
 
@@ -336,21 +458,31 @@ function reviewRows() {
   return [];
 }
 
-function renderHome() {
+function renderSchedule() {
+  const tabs = [['week','Week'],['coverage','Coverage'],['sessions','Sessions'],['open','Open slots']];
+  let html = `<h1>Schedule</h1>
+    <div class="tabs no-print">${tabs.map(([id, label]) =>
+      `<button type="button" class="${scheduleTab === id ? 'on' : ''}" onclick="scheduleTab='${id}';altFor=null;render()">${label}</button>`
+    ).join('')}</div>` + staleBanner();
+  if (scheduleTab === 'coverage') return html + renderReviewBody();
+  if (scheduleTab === 'sessions') return html + renderSessionsBody();
+  if (scheduleTab === 'open') return html + renderOpenBody();
+  return html + renderWeekBody();
+}
+
+function renderWeekBody() {
   const log = state.scheduleLog || [];
   const rev = reviewRows();
   const met = rev.filter(r => r.status === 'Met' || r.status === 'Over').length;
   if (!log.length) {
-    return `<h1>This week, at a glance</h1>
-      <p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
+    return `<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
       <div class="row no-print">
-        <button class="primary" onclick="state=sampleWorkspace();persist();generateNow()">Load sample & generate</button>
+        <button class="primary" onclick="state=sampleWorkspace();caseloadDirty=false;persist();generateNow()">Load sample &amp; generate</button>
         <button onclick="pickFile()">Open JSON / CSV</button>
       </div>`;
   }
   const cal = buildCalendarModel(log, state.settings, showAllWeeks);
-  let html = `<h1>Week view</h1>
-    <p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered</p>
+  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered. Click a block to lock or move it.</p>
     <div class="stat-grid no-print">
       <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
       <div class="stat"><b>${met}</b><span>Students meeting minutes</span></div>
@@ -382,8 +514,8 @@ function renderWeekGrid(cal, week) {
     const r0 = Math.max(0, Math.round((e.start - start) / inc));
     const r1 = Math.min(rows, Math.max(r0 + 1, Math.round((e.end - start) / inc)));
     const color = cal.gradeColors[e.grade] || { bg: '#444', text: '#fff' };
-    const text = e.names.join(' + ') + '\n' + minutesToTimeStr(e.start) + '–' + minutesToTimeStr(e.end);
-    if (cells[e.day]) cells[e.day][r0] = { span: Math.max(1, r1 - r0), text, color };
+    const text = e.names.join(' + ') + '\\n' + minutesToTimeStr(e.start) + '–' + minutesToTimeStr(e.end);
+    if (cells[e.day]) cells[e.day][r0] = { span: Math.max(1, r1 - r0), text, color, day: e.day, start: e.start, studentId: (e.studentIds && e.studentIds[0]) || '' };
     for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
   });
   let html = '<div class="cal-grid">';
@@ -394,17 +526,28 @@ function renderWeekGrid(cal, week) {
       const c = cells[d][r];
       if (c === 'skip') return;
       if (!c) { html += '<div></div>'; return; }
-      html += `<div style="grid-row: span ${c.span}"><div class="sess" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
+      html += `<div style="grid-row: span ${c.span}"><div class="sess" title="Open session tools" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
     });
   }
   return html + '</div>';
 }
 
-function renderReview() {
+function openCalendarSession(day, startMins, studentId) {
+  const i = (state.scheduleLog || []).findIndex(r => {
+    try { return r.day === day && timeStrToMinutes(r.start) === startMins && String(r.studentId) === String(studentId); }
+    catch (e) { return false; }
+  });
+  if (i < 0) { setStatus('Could not find that session.', 'bad'); return; }
+  altFor = i;
+  scheduleTab = 'sessions';
+  showView('schedule');
+}
+
+function renderReviewBody() {
   const rows = reviewRows();
-  if (!rows.length) return '<h1>Coverage</h1><p class="lede">Generate a schedule to see required vs placed minutes.</p>';
+  if (!rows.length) return '<p class="lede">Generate a schedule to see required vs placed minutes.</p>';
   const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
-  let html = `<h1>Coverage</h1><p class="lede">${met} of ${rows.length} students meeting required minutes</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th></tr></thead><tbody>`;
+  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th></tr></thead><tbody>`;
   rows.forEach(r => {
     html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td></tr>`;
   });
@@ -429,10 +572,9 @@ function clearLocks() {
   persist(); setStatus('Locks cleared.', 'ok'); render();
 }
 
-function renderSessions() {
+function renderSessionsBody() {
   const rows = state.scheduleLog || [];
-  let html = `<h1>Sessions</h1>
-    <p class="lede">Lock a row to keep it on the next generate. Find other times without reshuffling everyone.</p>
+  let html = `<p class="lede">Lock a row to keep it on the next generate. Find other times without reshuffling everyone.</p>
     <div class="row no-print">
       <button onclick="clearScheduleKeepLocks()">Clear unlocked</button>
       <button onclick="clearLocks()">Clear all locks</button>
@@ -455,7 +597,7 @@ function renderSessions() {
   return html;
 }
 
-function openAlts(i) { altFor = i; render(); }
+function openAlts(i) { altFor = i; scheduleTab = 'sessions'; render(); }
 
 function renderAlts() {
   const row = state.scheduleLog[altFor];
@@ -490,10 +632,10 @@ function applyAlt(n) {
   render();
 }
 
-function renderOpen() {
+function renderOpenBody() {
   const data = computeOpenSlots(engineInput());
-  if (data.error) return `<h1>Open slots</h1><p class="lede">${esc(data.error)}</p>`;
-  let html = `<h1>Open slots</h1><p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
+  if (data.error) return `<p class="lede">${esc(data.error)}</p>`;
+  let html = `<p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
   data.blocks.forEach(b => {
     html += `<div class="card"><h3>Grade ${esc(b.grade)}${data.hasAlternating ? ' · pattern ' + b.pattern : ''} <span class="meta">${b.openMinutes} open min / week</span></h3>
       <table class="heat"><thead><tr><th>Time</th>${DAYS.map(d => '<th>'+d+'</th>').join('')}</tr></thead><tbody>`;
@@ -508,63 +650,128 @@ function renderOpen() {
   return html;
 }
 
-function studentNeed(s) {
-  if ((s.frequencyType || 'Weekly') === 'Quarterly') return (s.sessionsPerQuarter || '?') + ' × ' + (s.quarterlySessionLength || '?') + ' min / qtr';
-  return (s.minutesPerWeek || 0) + ' min / week';
-}
-
 function renderStudents() {
-  const q = (document.getElementById('q') && document.getElementById('q').value || '').toLowerCase();
-  const list = state.students.filter(s => !q || JSON.stringify(s).toLowerCase().includes(q));
-  let html = `<h1>Students</h1>
-    <p class="lede">One card per student. Groups share a Group ID. Add from the form — or paste a CSV on the Files page.</p>
+  const list = state.students.filter(s => !studentQuery || JSON.stringify(s).toLowerCase().includes(studentQuery.toLowerCase()));
+  return `<h1>Students</h1>
+    <p class="lede">Caseload lives here. OT / resource times sit on each student — not a separate screen.</p>
+    ${staleBanner()}
     <div class="row">
-      <input id="q" placeholder="Search" style="max-width:240px" oninput="render()" value="${esc(q)}">
+      <input id="q" placeholder="Search name, grade, teacher…" style="max-width:260px" value="${esc(studentQuery)}" oninput="studentQuery=this.value;refreshStudentCards()">
       <button class="primary" onclick="openStudentForm()">Add student</button>
       <button onclick="exportCsv('students')">CSV</button>
     </div>
-    <div class="cards">`;
-  list.forEach((s, i) => {
+    <div class="cards" id="student-cards">${studentCardsHtml(list)}</div>`;
+}
+
+function refreshStudentCards() {
+  const el = document.getElementById('student-cards');
+  if (!el) return;
+  const list = state.students.filter(s => !studentQuery || JSON.stringify(s).toLowerCase().includes(studentQuery.toLowerCase()));
+  el.innerHTML = studentCardsHtml(list);
+}
+
+function studentCardsHtml(list) {
+  if (!list.length) return '<p class="lede">No students match.</p>';
+  return list.map(s => {
     const idx = state.students.indexOf(s);
-    html += `<div class="card">
-      <h3>${esc(s.firstName)} ${esc(s.lastName)} <span class="pill">${esc(s.status || 'Active')}</span></h3>
-      <div class="meta">${esc(s.id)} · Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''}<br>${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+    const cov = coverageFor(s.id);
+    const blocks = blocksFor(s.id);
+    const covPill = cov ? `<span class="pill ${cov.status === 'Under' ? 'bad' : 'ok'}">${esc(cov.status)} · ${cov.pct}%</span>` : '';
+    const blockBits = blocks.length
+      ? blocks.map(b => `${esc(b.reason || 'Blocked')} ${esc(b.day)} ${esc(b.start)}–${esc(b.end)}`).join('<br>')
+      : '<span class="meta">No extra blocks — grade lunch/specials still apply</span>';
+    return `<div class="card student" onclick="openStudentForm(${idx})">
+      <h3>${esc(s.lastName)}, ${esc(s.firstName)} <span class="pill">${esc(s.status || 'Active')}</span> ${covPill}</h3>
+      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+      <div class="meta" style="margin-top:8px">${blockBits}</div>
       <div class="row" style="margin:10px 0 0">
-        <button onclick="openStudentForm(${idx})">Edit</button>
-        <button class="ghost" onclick="state.students.splice(${idx},1);persist();render()">Remove</button>
+        <button onclick="event.stopPropagation();openStudentForm(${idx})">Edit</button>
+        <button onclick="event.stopPropagation();duplicateStudent(${idx})">Duplicate</button>
+        <button class="ghost danger" onclick="event.stopPropagation();removeStudent(${idx})">Remove</button>
       </div>
     </div>`;
-  });
-  return html + '</div>';
+  }).join('');
+}
+
+function removeStudent(idx) {
+  const s = state.students[idx];
+  if (!s) return;
+  if (!confirm('Remove ' + s.firstName + ' ' + s.lastName + '? Their unavailable times will be deleted too.')) return;
+  const id = s.id;
+  state.students.splice(idx, 1);
+  state.constraints = state.constraints.filter(c => c.studentId !== id);
+  persistCaseload();
+  render();
+}
+
+function duplicateStudent(idx) {
+  const src = state.students[idx];
+  if (!src) return;
+  const copy = Object.assign({}, src, { id: suggestId(src) });
+  state.students.splice(idx + 1, 0, copy);
+  blocksFor(src.id).forEach(b => state.constraints.push(Object.assign({}, b, { studentId: copy.id })));
+  persistCaseload();
+  render();
+  openStudentForm(idx + 1);
+}
+
+function gradeOptions(selected) {
+  const grades = knownGrades();
+  if (selected && grades.indexOf(selected) < 0) grades.push(selected);
+  return grades.map(g => `<option value="${esc(g)}" ${g === selected ? 'selected' : ''}>${esc(g)}</option>`).join('');
+}
+function groupOptions(selected) {
+  const groups = knownGroups();
+  let html = '<option value="">Choose a group</option>';
+  groups.forEach(g => { html += `<option value="${esc(g)}" ${g === selected ? 'selected' : ''}>${esc(g)}</option>`; });
+  html += '<option value="__new__">New group…</option>';
+  return html;
 }
 
 function openStudentForm(idx) {
-  const s = idx == null ? { id: '', firstName: '', lastName: '', grade: '', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' } : Object.assign({}, state.students[idx]);
+  const isNew = idx == null;
+  const s = isNew
+    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
+    : Object.assign({}, state.students[idx]);
   const wrap = document.createElement('div');
   wrap.className = 'modal-bg';
   wrap.innerHTML = `<div class="modal">
-    <h2 style="margin-top:0">${idx == null ? 'Add student' : 'Edit student'}</h2>
+    <h2 style="margin-top:0">${isNew ? 'Add student' : esc(s.lastName) + ', ' + esc(s.firstName)}</h2>
     <div class="form-grid">
-      <div><label>ID</label><input id="f-id" value="${esc(s.id)}"></div>
-      <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
       <div><label>First name</label><input id="f-first" value="${esc(s.firstName)}"></div>
       <div><label>Last name</label><input id="f-last" value="${esc(s.lastName)}"></div>
-      <div><label>Grade</label><input id="f-grade" value="${esc(s.grade)}"></div>
-      <div><label>Teacher</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
+      <div><label>Grade</label><select id="f-grade">${gradeOptions(s.grade)}<option value="__new__">Other grade…</option></select><input id="f-grade-new" class="hidden" placeholder="e.g. 4"></div>
+      <div><label>Teacher / room</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
       <div><label>Service</label><select id="f-service"><option>Individual</option><option>Group</option></select></div>
-      <div><label>Group ID</label><input id="f-gid" value="${esc(s.groupId)}"></div>
+      <div id="group-fields"><label>Group</label><select id="f-gid-pick">${groupOptions(s.groupId)}</select><input id="f-gid" class="${s.groupId && knownGroups().indexOf(s.groupId) < 0 ? '' : 'hidden'}" placeholder="e.g. G1" value="${esc(s.groupId)}"></div>
       <div><label>Frequency</label><select id="f-freq"><option>Weekly</option><option>Quarterly</option></select></div>
-      <div><label>Minutes / week</label><input id="f-min" type="number" value="${esc(s.minutesPerWeek)}"></div>
-      <div><label>Preferred length</label><input id="f-pref" type="number" value="${esc(s.preferredSessionLength)}"></div>
-      <div><label>Sessions / quarter</label><input id="f-sq" type="number" value="${esc(s.sessionsPerQuarter)}"></div>
-      <div><label>Quarterly length</label><input id="f-ql" type="number" value="${esc(s.quarterlySessionLength)}"></div>
-      <div><label>Fixed day</label><select id="f-fd"><option value=""></option>${DAYS.map(d=>'<option>'+d+'</option>').join('')}</select></div>
-      <div><label>Fixed start</label><input id="f-fs" placeholder="9:00 AM" value="${esc(s.fixedStart)}"></div>
+      <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
     </div>
+    <div id="weekly-fields" class="form-grid">
+      <div><label>Minutes / week</label><input id="f-min" type="number" min="0" value="${esc(s.minutesPerWeek)}"></div>
+      <div><label>Preferred session length</label><input id="f-pref" type="number" min="0" placeholder="optional" value="${esc(s.preferredSessionLength)}"></div>
+    </div>
+    <div id="quarterly-fields" class="form-grid hidden">
+      <div><label>Sessions / quarter</label><input id="f-sq" type="number" min="0" value="${esc(s.sessionsPerQuarter)}"></div>
+      <div><label>Session length</label><input id="f-ql" type="number" min="0" value="${esc(s.quarterlySessionLength)}"></div>
+    </div>
+    <div class="form-grid">
+      <div><label>Pin to day (optional)</label><select id="f-fd"><option value=""></option>${DAYS.map(d=>'<option>'+d+'</option>').join('')}</select></div>
+      <div><label>Pin start (optional)</label><input id="f-fs" type="time" step="300" value="${esc(toTimeInput(s.fixedStart))}"></div>
+    </div>
+    <details style="margin-top:10px"><summary class="meta">Student ID</summary>
+      <input id="f-id" value="${esc(s.id)}" placeholder="Auto-filled from name if blank">
+    </details>
     <label>Notes</label><textarea id="f-notes" rows="2">${esc(s.notes)}</textarea>
+    <div class="modal-sec">
+      <h3>Unavailable times</h3>
+      <p class="meta">OT, resource room, or anything besides this student’s grade lunch/specials.</p>
+      <div id="block-editor">${isNew ? '<p class="meta">Save the student first, then add blocks here.</p>' : blockEditorHtml(s.id)}</div>
+      ${isNew ? '' : `<div class="row" style="margin-top:8px"><button type="button" onclick="addBlockFor('${esc(s.id)}')">Add unavailable time</button></div>`}
+    </div>
     <div class="row" style="margin-top:12px">
-      <button class="primary" id="f-save">Save</button>
-      <button id="f-cancel">Cancel</button>
+      <button class="primary" id="f-save">Save student</button>
+      <button id="f-cancel">Close</button>
     </div>
   </div>`;
   document.body.appendChild(wrap);
@@ -572,16 +779,44 @@ function openStudentForm(idx) {
   wrap.querySelector('#f-service').value = s.serviceType || 'Individual';
   wrap.querySelector('#f-freq').value = s.frequencyType || 'Weekly';
   wrap.querySelector('#f-fd').value = s.fixedDay || '';
+  const sync = () => {
+    const service = wrap.querySelector('#f-service').value;
+    const freq = wrap.querySelector('#f-freq').value;
+    wrap.querySelector('#weekly-fields').classList.toggle('hidden', freq !== 'Weekly');
+    wrap.querySelector('#quarterly-fields').classList.toggle('hidden', freq !== 'Quarterly');
+    wrap.querySelector('#group-fields').classList.toggle('hidden', service !== 'Group');
+  };
+  wrap.querySelector('#f-service').onchange = sync;
+  wrap.querySelector('#f-freq').onchange = sync;
+  wrap.querySelector('#f-grade').onchange = () => {
+    const custom = wrap.querySelector('#f-grade-new');
+    const isOther = wrap.querySelector('#f-grade').value === '__new__';
+    custom.classList.toggle('hidden', !isOther);
+    if (isOther) custom.focus();
+  };
+  wrap.querySelector('#f-gid-pick').onchange = () => {
+    const custom = wrap.querySelector('#f-gid');
+    const isNewGroup = wrap.querySelector('#f-gid-pick').value === '__new__';
+    custom.classList.toggle('hidden', !isNewGroup);
+    if (isNewGroup) { custom.value = ''; custom.focus(); }
+    else custom.value = wrap.querySelector('#f-gid-pick').value;
+  };
+  sync();
   wrap.querySelector('#f-cancel').onclick = () => wrap.remove();
   wrap.querySelector('#f-save').onclick = () => {
+    const gradePick = wrap.querySelector('#f-grade').value;
+    const groupPick = wrap.querySelector('#f-gid-pick').value;
+    const gidCustom = wrap.querySelector('#f-gid');
     const next = {
       id: wrap.querySelector('#f-id').value.trim(),
       firstName: wrap.querySelector('#f-first').value.trim(),
       lastName: wrap.querySelector('#f-last').value.trim(),
-      grade: wrap.querySelector('#f-grade').value.trim(),
+      grade: gradePick === '__new__' ? wrap.querySelector('#f-grade-new').value.trim() : gradePick,
       teacher: wrap.querySelector('#f-teacher').value.trim(),
       serviceType: wrap.querySelector('#f-service').value,
-      groupId: wrap.querySelector('#f-gid').value.trim(),
+      groupId: wrap.querySelector('#f-service').value === 'Group'
+        ? (groupPick === '__new__' || !gidCustom.classList.contains('hidden') ? gidCustom.value.trim() : groupPick)
+        : '',
       frequencyType: wrap.querySelector('#f-freq').value,
       minutesPerWeek: wrap.querySelector('#f-min').value,
       preferredSessionLength: wrap.querySelector('#f-pref').value,
@@ -590,95 +825,143 @@ function openStudentForm(idx) {
       status: wrap.querySelector('#f-status').value,
       notes: wrap.querySelector('#f-notes').value,
       fixedDay: wrap.querySelector('#f-fd').value,
-      fixedStart: wrap.querySelector('#f-fs').value.trim(),
+      fixedStart: fromTimeInput(wrap.querySelector('#f-fs').value),
     };
-    if (!next.id || !next.firstName) { alert('ID and first name are required.'); return; }
+    if (!next.firstName || !next.lastName) { alert('First and last name are required.'); return; }
+    if (!next.id) next.id = suggestId(next);
+    if (state.students.some((row, i) => row.id === next.id && i !== idx)) {
+      alert('That student ID is already in use.');
+      return;
+    }
     if (idx == null) state.students.push(next);
-    else state.students[idx] = next;
-    persist(); wrap.remove(); render();
+    else {
+      const oldId = state.students[idx].id;
+      state.students[idx] = next;
+      if (oldId !== next.id) state.constraints.forEach(c => { if (c.studentId === oldId) c.studentId = next.id; });
+    }
+    persistCaseload();
+    wrap.remove();
+    render();
   };
 }
 
-function dayChips(selected, inputId) {
-  const set = new Set(parseDayList(selected || ''));
-  return DAYS.map(d => `<button type="button" class="chip ${set.has(d) ? 'on' : ''}" data-day="${d}" onclick="toggleDay(this,'${inputId}')">${d}</button>`).join('') +
-    `<input type="hidden" id="${inputId}" value="${esc(selected || '')}">`;
+function blockEditorHtml(studentId) {
+  const rows = state.constraints.map((c, i) => ({ c, i })).filter(x => x.c.studentId === studentId);
+  if (!rows.length) return '<p class="meta">None yet. Grade lunch and specials already apply automatically.</p>';
+  return rows.map(({ c, i }) => `<div class="block-item">
+    <div class="form-grid">
+      <div><label>Reason</label><input value="${esc(c.reason)}" onchange="state.constraints[${i}].reason=this.value;persistCaseload()"></div>
+      <div></div>
+      <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(c.start))}" onchange="state.constraints[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+      <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(c.end))}" onchange="state.constraints[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+    </div>
+    <label>Days</label>
+    <div class="chip-row">${dayChips(c.day, 'constraints', i)}</div>
+    <button class="ghost danger" onclick="removeBlock(${i}, '${esc(studentId)}')">Remove block</button>
+  </div>`).join('');
 }
-function toggleDay(btn, inputId) {
+
+function refreshBlockEditor(studentId) {
+  const el = document.getElementById('block-editor');
+  if (el) el.innerHTML = blockEditorHtml(studentId);
+}
+
+function addBlockFor(studentId) {
+  state.constraints.push({ studentId: studentId, day: 'Mon', start: '9:00 AM', end: '9:30 AM', reason: 'OT' });
+  persistCaseload();
+  refreshBlockEditor(studentId);
+}
+
+function removeBlock(i, studentId) {
+  state.constraints.splice(i, 1);
+  persistCaseload();
+  refreshBlockEditor(studentId);
+}
+
+function dayChips(selected, kind, i) {
+  const set = new Set(parseDayList(selected || ''));
+  return DAYS.map(d => `<button type="button" class="chip ${set.has(d) ? 'on' : ''}" data-day="${d}" onclick="toggleDay(this,'${kind}',${i})">${d}</button>`).join('');
+}
+
+function toggleDay(btn, kind, i) {
   btn.classList.toggle('on');
   const days = Array.from(btn.parentElement.querySelectorAll('.chip.on')).map(b => b.dataset.day);
-  document.getElementById(inputId).value = days.join(', ');
+  const v = days.join(', ');
+  if (kind === 'availability') state.availability[i].day = v;
+  if (kind === 'grades') state.grades[i].day = v;
+  if (kind === 'constraints') state.constraints[i].day = v;
+  persistCaseload();
 }
 
 function addWindow(kind) {
   if (kind === 'availability') state.availability.push({ day: 'Mon-Fri', start: '8:00 AM', end: '3:00 PM', pattern: '', notes: '' });
-  if (kind === 'grades') state.grades.push({ grade: '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
-  if (kind === 'constraints') state.constraints.push({ studentId: '', day: 'Mon', start: '', end: '', reason: '' });
-  persist(); render();
+  if (kind === 'grades') state.grades.push({ grade: knownGrades()[0] || '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
+  persistCaseload(); render();
 }
 
-function renderHours() {
-  let html = `<h1>My hours</h1><p class="lede">When you can see students. Leave pattern blank for every week; A/B for alternating.</p>
-    <div class="row"><button class="primary" onclick="addWindow('availability')">Add window</button><button onclick="exportCsv('availability')">CSV</button></div>`;
-  state.availability.forEach((w, i) => {
-    html += `<div class="card"><div class="form-grid">
-      <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'av-d-'+i)}</div></div>
-      <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persist()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
-      <div><label>Start</label><input value="${esc(w.start)}" onchange="state.availability[${i}].start=this.value;persist()"></div>
-      <div><label>End</label><input value="${esc(w.end)}" onchange="state.availability[${i}].end=this.value;persist()"></div>
-    </div>
-    <label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persist()">
-    <button class="ghost" onclick="commitDays('availability',${i},'av-d-${i}');state.availability.splice(${i},1);persist();render()">Remove</button>
-    <button class="ghost" onclick="commitDays('availability',${i},'av-d-${i}')">Save days</button>
+function copyWindow(kind, i) {
+  const src = kind === 'availability' ? state.availability[i] : state.grades[i];
+  if (!src) return;
+  (kind === 'availability' ? state.availability : state.grades).splice(i + 1, 0, Object.assign({}, src));
+  persistCaseload(); render();
+}
+
+function addLunchBlock() {
+  state.grades.push({ grade: knownGrades()[0] || '', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' });
+  persistCaseload(); render();
+}
+
+function renderSetup() {
+  return `<h1>Hours &amp; grades</h1>
+    <p class="lede">Your working windows, plus grade-level lunch/recess/specials. Student-specific OT or resource times live on the student card.</p>
+    ${staleBanner()}
+    <div class="setup-grid">
+      <div>
+        <h2>My hours</h2>
+        <p class="meta">When you can see students. Leave pattern blank for every week; A/B for alternating.</p>
+        <div class="row"><button class="primary" onclick="addWindow('availability')">Add window</button><button onclick="exportCsv('availability')">CSV</button></div>
+        ${state.availability.map((w, i) => `<div class="card"><div class="form-grid">
+          <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'availability', i)}</div></div>
+          <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persistCaseload()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(w.start))}" onchange="state.availability[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(w.end))}" onchange="state.availability[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+        </div>
+        <label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persistCaseload()">
+        <div class="row" style="margin:10px 0 0">
+          <button onclick="copyWindow('availability',${i})">Duplicate</button>
+          <button class="ghost danger" onclick="state.availability.splice(${i},1);persistCaseload();render()">Remove</button>
+        </div></div>`).join('') || '<p class="meta">No hours yet.</p>'}
+      </div>
+      <div>
+        <h2>Grade blocks</h2>
+        <p class="meta">Inherited by every student in that grade. Use a student card for one-off conflicts.</p>
+        <div class="row"><button class="primary" onclick="addWindow('grades')">Add block</button><button onclick="addLunchBlock()">Add lunch</button><button onclick="exportCsv('grades')">CSV</button></div>
+        ${state.grades.map((g, i) => `<div class="card"><div class="form-grid">
+          <div><label>Grade</label><input list="grade-list" value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persistCaseload()"></div>
+          <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persistCaseload()"></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(g.start))}" onchange="state.grades[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(g.end))}" onchange="state.grades[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+        </div><label>Days</label><div class="chip-row">${dayChips(g.day, 'grades', i)}</div>
+        <div class="row" style="margin:10px 0 0">
+          <button onclick="copyWindow('grades',${i})">Duplicate</button>
+          <button class="ghost danger" onclick="state.grades.splice(${i},1);persistCaseload();render()">Remove</button>
+        </div></div>`).join('') || '<p class="meta">No grade blocks yet.</p>'}
+        <datalist id="grade-list">${knownGrades().map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+      </div>
     </div>`;
-  });
-  return html;
-}
-
-function commitDays(kind, i, id) {
-  const v = document.getElementById(id).value;
-  if (kind === 'availability') state.availability[i].day = v;
-  if (kind === 'grades') state.grades[i].day = v;
-  if (kind === 'constraints') state.constraints[i].day = v;
-  persist();
-}
-
-function renderGrades() {
-  let html = `<h1>Grade blocks</h1><p class="lede">Lunch, recess, specials — inherited by every student in that grade.</p>
-    <div class="row"><button class="primary" onclick="addWindow('grades')">Add block</button><button onclick="exportCsv('grades')">CSV</button></div>`;
-  state.grades.forEach((g, i) => {
-    html += `<div class="card"><div class="form-grid">
-      <div><label>Grade</label><input value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persist()"></div>
-      <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persist()"></div>
-      <div><label>Start</label><input value="${esc(g.start)}" onchange="state.grades[${i}].start=this.value;persist()"></div>
-      <div><label>End</label><input value="${esc(g.end)}" onchange="state.grades[${i}].end=this.value;persist()"></div>
-    </div><label>Days</label><div class="chip-row">${dayChips(g.day, 'gr-d-'+i)}</div>
-    <button class="ghost" onclick="commitDays('grades',${i},'gr-d-${i}');state.grades.splice(${i},1);persist();render()">Remove</button>
-    <button class="ghost" onclick="commitDays('grades',${i},'gr-d-${i}')">Save days</button></div>`;
-  });
-  return html;
-}
-
-function renderBlocks() {
-  let html = `<h1>Student blocks</h1><p class="lede">OT, resource room, anything that applies to one student beyond their grade.</p>
-    <div class="row"><button class="primary" onclick="addWindow('constraints')">Add block</button><button onclick="exportCsv('constraints')">CSV</button></div>`;
-  state.constraints.forEach((c, i) => {
-    html += `<div class="card"><div class="form-grid">
-      <div><label>Student ID</label><input value="${esc(c.studentId)}" onchange="state.constraints[${i}].studentId=this.value;persist()"></div>
-      <div><label>Reason</label><input value="${esc(c.reason)}" onchange="state.constraints[${i}].reason=this.value;persist()"></div>
-      <div><label>Start</label><input value="${esc(c.start)}" onchange="state.constraints[${i}].start=this.value;persist()"></div>
-      <div><label>End</label><input value="${esc(c.end)}" onchange="state.constraints[${i}].end=this.value;persist()"></div>
-    </div><label>Days</label><div class="chip-row">${dayChips(c.day, 'c-d-'+i)}</div>
-    <button class="ghost" onclick="commitDays('constraints',${i},'c-d-${i}');state.constraints.splice(${i},1);persist();render()">Remove</button>
-    <button class="ghost" onclick="commitDays('constraints',${i},'c-d-${i}')">Save days</button></div>`;
-  });
-  return html;
 }
 
 function renderFiles() {
   return `<h1>Import / export</h1>
     <p class="lede">The live workspace auto-saves in this browser. JSON is the full file (settings + caseload + schedule). CSV is one table at a time.</p>
     <div class="drop" id="drop">Drop a .json or .csv here, or <button onclick="pickFile()">choose a file</button></div>
+    <div class="row">
+      <label style="margin:0;font-weight:600">CSV import</label>
+      <select style="width:auto" onchange="csvImportMode=this.value">
+        <option value="replace" ${csvImportMode==='replace'?'selected':''}>Replace this table</option>
+        <option value="merge" ${csvImportMode==='merge'?'selected':''}>Merge (match students by ID)</option>
+      </select>
+    </div>
     <div class="row">
       <button class="primary" onclick="exportWorkspace()">Download workspace.json</button>
       <button onclick="exportCsv('students')">students.csv</button>
@@ -688,8 +971,8 @@ function renderFiles() {
       <button onclick="exportCsv('schedule')">schedule.csv</button>
     </div>
     <div class="row">
-      <button onclick="state=sampleWorkspace();persist();render();setStatus('Sample caseload loaded.','ok')">Reset to sample</button>
-      <button onclick="state=blankWorkspace();persist();render();setStatus('Cleared.','ok')">Start empty</button>
+      <button onclick="state=sampleWorkspace();caseloadDirty=false;persist();render();setStatus('Sample caseload loaded.','ok')">Reset to sample</button>
+      <button onclick="if(confirm('Clear the whole workspace?')){state=blankWorkspace();caseloadDirty=false;persist();render();setStatus('Cleared.','ok')}">Start empty</button>
     </div>
     <div class="card"><h3>CSV headers</h3>
       <p class="meta"><b>students:</b> ${CSV_SCHEMAS.students.join(', ')}</p>
@@ -704,25 +987,29 @@ function renderSettings() {
   const s = state.settings;
   const num = (key, label) => `<div><label>${label}</label><input type="number" value="${esc(s[key])}" onchange="state.settings.${key}=Number(this.value)||this.value;persist()"></div>`;
   return `<h1>Settings</h1>
-    <p class="lede">Same knobs as the Sheets build. Changes apply on the next generate.</p>
+    <p class="lede">Everyday knobs. Placement extras live under Advanced — they apply on the next generate.</p>
     <div class="card form-grid">
-      ${num('slotIncrement','Slot increment (min)')}
       ${num('minSessionLength','Min session (min)')}
       ${num('maxSessionLength','Max session (min)')}
       ${num('weeksPerQuarter','Weeks per quarter')}
-      ${num('groupRescueExtraMinutes','Group rescue extra minutes')}
-      ${num('maxGroupSize','Max auto-group size')}
       <div><label>Starting week pattern</label><select onchange="state.settings.startingWeekPattern=this.value;persist()"><option ${s.startingWeekPattern==='A'?'selected':''}>A</option><option ${s.startingWeekPattern==='B'?'selected':''}>B</option></select></div>
-      <div><label>Prefer consistent weekly pattern</label><select onchange="state.settings.preferConsistentPattern=this.value==='true';persist()"><option value="true" ${s.preferConsistentPattern?'selected':''}>Yes</option><option value="false" ${!s.preferConsistentPattern?'selected':''}>No</option></select></div>
       <div><label>Front-load first sessions (weeks 1–2)</label><select onchange="state.settings.frontLoadFirstSessions=this.value==='true';persist()"><option value="true" ${s.frontLoadFirstSessions?'selected':''}>Yes</option><option value="false" ${!s.frontLoadFirstSessions?'selected':''}>No</option></select></div>
       <div><label>Show teacher on outputs</label><select onchange="state.settings.showTeacherInfo=this.value==='true';persist()"><option value="true" ${s.showTeacherInfo?'selected':''}>Yes</option><option value="false" ${!s.showTeacherInfo?'selected':''}>No</option></select></div>
-    </div>`;
+    </div>
+    <details class="adv"><summary>Advanced</summary>
+      <div class="card form-grid" style="margin-top:10px">
+        ${num('slotIncrement','Slot increment (min)')}
+        ${num('groupRescueExtraMinutes','Group rescue extra minutes')}
+        ${num('maxGroupSize','Max auto-group size')}
+        <div><label>Prefer consistent weekly pattern</label><select onchange="state.settings.preferConsistentPattern=this.value==='true';persist()"><option value="true" ${s.preferConsistentPattern?'selected':''}>Yes</option><option value="false" ${!s.preferConsistentPattern?'selected':''}>No</option></select></div>
+      </div>
+    </details>`;
 }
 
 function render() {
   const main = document.getElementById('main');
-  const map = { home: renderHome, review: renderReview, sessions: renderSessions, open: renderOpen, students: renderStudents, hours: renderHours, grades: renderGrades, blocks: renderBlocks, files: renderFiles, settings: renderSettings };
-  main.innerHTML = (map[view] || renderHome)();
+  const map = { students: renderStudents, setup: renderSetup, schedule: renderSchedule, files: renderFiles, settings: renderSettings };
+  main.innerHTML = (map[view] || renderStudents)();
   const drop = document.getElementById('drop');
   if (drop) {
     drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('hot'); };
