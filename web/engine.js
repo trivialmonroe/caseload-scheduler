@@ -1195,10 +1195,10 @@ function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   const entries = Object.values(entryMap);
   const distinctGrades = Array.from(new Set(entries.map(e => e.grade))).sort((a, b) => gradeSortValue(a) - gradeSortValue(b));
   const palette = [
-    { bg: '#7C5CFC', text: '#FFFFFF' }, { bg: '#00BFA5', text: '#FFFFFF' },
-    { bg: '#FF6B35', text: '#FFFFFF' }, { bg: '#EC4899', text: '#FFFFFF' },
-    { bg: '#2E86F0', text: '#FFFFFF' }, { bg: '#F5A623', text: '#1A1200' },
-    { bg: '#26C281', text: '#FFFFFF' }, { bg: '#EF4444', text: '#FFFFFF' }
+    { bg: '#0F766E', text: '#FFFFFF' }, { bg: '#0891B2', text: '#FFFFFF' },
+    { bg: '#4D7C0F', text: '#FFFFFF' }, { bg: '#0369A1', text: '#FFFFFF' },
+    { bg: '#0D9488', text: '#FFFFFF' }, { bg: '#B45309', text: '#FFFFFF' },
+    { bg: '#15803D', text: '#FFFFFF' }, { bg: '#7C2D12', text: '#FFFFFF' }
   ];
   const gradeColors = {};
   distinctGrades.forEach((g, i) => { gradeColors[g] = palette[i % palette.length]; });
