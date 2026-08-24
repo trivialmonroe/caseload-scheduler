@@ -965,6 +965,198 @@ function pickDiverseCandidates(candidates, limit) {
   return out;
 }
 
+function weekNumFromLogRow(logRow) {
+  const weekText = String(logRow.week || '').trim();
+  const isAllWeeks = weekText === 'Every Week' || weekText === '';
+  return { isAllWeeks, weekNum: isAllWeeks ? ALL_WEEKS_KEY : Number(String(weekText).replace(/[^0-9]/g, '')) };
+}
+
+function resolveSessionMembers(scheduleLog, logRow, studentsById) {
+  const mateRows = sessionMateRows(scheduleLog, logRow);
+  const mateIds = mateRows.map(r => String(r.studentId).trim());
+  let members = mateIds.map(id => studentsById[id]).filter(Boolean);
+  if (!members.length) {
+    const student = studentsById[String(logRow.studentId).trim()];
+    if (student) members = [student];
+  }
+  return { mateRows, mateIds, members };
+}
+
+function uniqueSessionRepresentatives(scheduleLog) {
+  const seen = {};
+  const out = [];
+  (scheduleLog || []).forEach((r, i) => {
+    const key = sessionKeyFromLogRow(r);
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push({ row: r, index: i, key });
+  });
+  return out;
+}
+
+function fillBookingsExcluding(scheduleLog, settings, students, excludeMovingKeys) {
+  const providerBookingsByWeek = emptyBookingsByWeek(settings.weeksList);
+  const memberBookingsByWeek = {};
+  students.forEach(s => { memberBookingsByWeek[s.id] = emptyBookingsByWeek(settings.weeksList); });
+  (scheduleLog || []).forEach(r => {
+    const rowStudentId = String(r.studentId).trim();
+    if (excludeMovingKeys[sessionKeyFromLogRow(r) + '|' + rowStudentId]) return;
+    const rWeekText = String(r.week || '').trim();
+    const rIsAll = rWeekText === 'Every Week' || rWeekText === '';
+    let start, end;
+    try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
+    const weeksHit = rIsAll ? settings.weeksList : [Number(String(rWeekText).replace(/[^0-9]/g, ''))];
+    weeksHit.forEach(w => {
+      if (!providerBookingsByWeek[w]) return;
+      providerBookingsByWeek[w][r.day].push({ start, end });
+      if (memberBookingsByWeek[rowStudentId] && memberBookingsByWeek[rowStudentId][w]) {
+        memberBookingsByWeek[rowStudentId][w][r.day].push({ start, end });
+      }
+    });
+  });
+  return { providerBookingsByWeek, memberBookingsByWeek };
+}
+
+/** True if session can sit at day/start with its own duration (bookings already exclude vacated groups). */
+function canPlaceSessionAt(session, day, start, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings) {
+  const duration = session.sessionLength;
+  const end = start + duration;
+  const weeksToCheck = weeksForEntry(session.week, settings);
+  const providerAvail = effectiveAvailability(weeksToCheck, availByPattern, settings);
+  const windows = providerAvail[day] || [];
+  if (!windows.some(win => start >= win.start && end <= win.end)) return false;
+  if (weeksToCheck.some(w => !providerBookingsByWeek[w] || (providerBookingsByWeek[w][day] || []).some(b => overlaps(start, end, b.start, b.end)))) {
+    return false;
+  }
+  const memberBlackouts = session.members.map(m => getStudentBlackouts(m, gradeBlackouts, studentConstraints));
+  for (let i = 0; i < session.members.length; i++) {
+    const m = session.members[i];
+    if ((memberBlackouts[i][day] || []).some(b => overlaps(start, end, b.start, b.end))) return false;
+    if (weeksToCheck.some(w =>
+      !(memberBookingsByWeek[m.id] && memberBookingsByWeek[m.id][w])
+      || (memberBookingsByWeek[m.id][w][day] || []).some(b => overlaps(start, end, b.start, b.end))
+    )) return false;
+  }
+  return true;
+}
+
+/**
+ * Suggest mutual trades: A takes B's start, B takes A's start (each keeps its duration).
+ * Useful when the calendar is full and empty alternate slots are scarce.
+ */
+function findSwapCandidates(input, logRow) {
+  const settings = buildSettings(input.settings);
+  const availByPattern = loadProviderAvailability(input.availability);
+  const gradeBlackouts = loadGradeBlackouts(input.grades);
+  const studentConstraints = loadStudentConstraints(input.constraints);
+  const students = loadStudents(input.students);
+  const studentsById = {};
+  students.forEach(s => { studentsById[s.id] = s; });
+
+  const a = resolveSessionMembers(input.scheduleLog, logRow, studentsById);
+  if (!a.members.length) return { error: 'Student not found (may be inactive).', swaps: [] };
+  const aWeek = weekNumFromLogRow(logRow);
+  let aStart, aEnd, aLen;
+  try {
+    aStart = timeStrToMinutes(logRow.start);
+    aEnd = timeStrToMinutes(logRow.end);
+    aLen = aEnd - aStart;
+  } catch (e) {
+    return { error: 'Bad session time.', swaps: [] };
+  }
+  const aDay = logRow.day;
+  const aKey = sessionKeyFromLogRow(logRow);
+  const aSession = {
+    members: a.members,
+    sessionLength: aLen,
+    week: aWeek.weekNum,
+    reqId: String(logRow.groupId || a.members[0].id)
+  };
+
+  const swaps = [];
+  uniqueSessionRepresentatives(input.scheduleLog).forEach(rep => {
+    if (rep.key === aKey) return;
+    const other = rep.row;
+    if (String(other.locked).toLowerCase() === 'yes') return;
+    if (String(logRow.locked).toLowerCase() === 'yes') return;
+    const bWeek = weekNumFromLogRow(other);
+    // Only swap like-with-like weeks (Every↔Every or same Week N).
+    if (aWeek.isAllWeeks !== bWeek.isAllWeeks) return;
+    if (!aWeek.isAllWeeks && Number(aWeek.weekNum) !== Number(bWeek.weekNum)) return;
+
+    const b = resolveSessionMembers(input.scheduleLog, other, studentsById);
+    if (!b.members.length) return;
+    // Shared student cannot be in two places — skip overlapping membership.
+    if (a.mateIds.some(id => b.mateIds.indexOf(id) >= 0)) return;
+
+    let bStart, bEnd, bLen;
+    try {
+      bStart = timeStrToMinutes(other.start);
+      bEnd = timeStrToMinutes(other.end);
+      bLen = bEnd - bStart;
+    } catch (e) { return; }
+    if (other.day === aDay && bStart === aStart) return;
+
+    const exclude = {};
+    a.mateRows.forEach(r => { exclude[sessionKeyFromLogRow(r) + '|' + String(r.studentId).trim()] = true; });
+    b.mateRows.forEach(r => { exclude[sessionKeyFromLogRow(r) + '|' + String(r.studentId).trim()] = true; });
+    const { providerBookingsByWeek, memberBookingsByWeek } = fillBookingsExcluding(
+      input.scheduleLog, settings, students, exclude
+    );
+
+    const bSession = {
+      members: b.members,
+      sessionLength: bLen,
+      week: bWeek.weekNum,
+      reqId: String(other.groupId || b.members[0].id)
+    };
+
+    const aFitsAtB = canPlaceSessionAt(
+      aSession, other.day, bStart,
+      availByPattern, gradeBlackouts, studentConstraints,
+      providerBookingsByWeek, memberBookingsByWeek, settings
+    );
+    const bFitsAtA = canPlaceSessionAt(
+      bSession, aDay, aStart,
+      availByPattern, gradeBlackouts, studentConstraints,
+      providerBookingsByWeek, memberBookingsByWeek, settings
+    );
+    if (!aFitsAtB || !bFitsAtA) return;
+
+    const names = Array.from(new Set(b.mateRows.map(r => r.name).filter(Boolean)));
+    swaps.push({
+      otherIndex: rep.index,
+      otherKey: rep.key,
+      otherNames: names,
+      otherLabel: names.join(' + ') || other.name,
+      otherDay: other.day,
+      otherStart: bStart,
+      otherEnd: bEnd,
+      otherWeek: other.week,
+      otherGroupId: other.groupId || '',
+      otherDuration: bLen,
+      aGoesTo: { day: other.day, start: bStart, end: bStart + aLen, week: aWeek.weekNum },
+      bGoesTo: { day: aDay, start: aStart, end: aStart + bLen, week: bWeek.weekNum }
+    });
+  });
+
+  // Prefer nearer swaps (same day first, then closer start times).
+  swaps.sort((x, y) => {
+    const sameDayX = x.otherDay === aDay ? 0 : 1;
+    const sameDayY = y.otherDay === aDay ? 0 : 1;
+    if (sameDayX !== sameDayY) return sameDayX - sameDayY;
+    return Math.abs(x.otherStart - aStart) - Math.abs(y.otherStart - aStart);
+  });
+
+  return {
+    members: a.members,
+    mateIds: a.mateIds,
+    isAllWeeks: aWeek.isAllWeeks,
+    weekNum: aWeek.weekNum,
+    swaps: swaps.slice(0, 24)
+  };
+}
+
 function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   settings = buildSettings(settings);
   const sessions = (logRows || []).map(r => ({
@@ -1166,10 +1358,10 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
-    computeOpenSlots, findAlternativeSlots, pickDiverseCandidates, buildCalendarModel,
+    computeOpenSlots, findAlternativeSlots, findSwapCandidates, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
-    sessionMateRows, sessionKeyFromLogRow, findAlternativeSlots, reviewFromScheduleLog,
+    sessionMateRows, sessionKeyFromLogRow, findAlternativeSlots, findSwapCandidates, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
   };
 }

@@ -183,12 +183,27 @@
       background: #dcfce7 !important;
       box-shadow: inset 0 0 0 2px #16a34a;
     }
+    .cal-slot.swap-ok {
+      box-shadow: inset 0 0 0 2px #d97706;
+      outline: 2px dashed #f59e0b;
+      outline-offset: -2px;
+    }
+    .cal-slot.swap-ok .sess { filter: saturate(1.15) brightness(1.05); }
     .cal-slot.drop-hover {
       background: #bbf7d0 !important;
       box-shadow: inset 0 0 0 2px #15803d;
     }
-    .cal-grid.dnd-active .cal-slot:not(.drop-ok) {
+    .cal-slot.swap-ok.drop-hover {
+      background: #ffedd5 !important;
+      box-shadow: inset 0 0 0 2px #c2410c;
+    }
+    .cal-grid.dnd-active .cal-slot:not(.drop-ok):not(.swap-ok) {
       background: #fafaf9;
+    }
+    .chip.swap {
+      border-color: #f59e0b;
+      background: #fffbeb;
+      color: #92400e;
     }
     .dnd-hint {
       font-size: 13px; color: var(--muted); margin: 0 0 12px;
@@ -676,6 +691,7 @@ function sessionPopoverHtml() {
   const locked = String(row.locked).toLowerCase() === 'yes';
   const mates = sessionMateRows(state.scheduleLog, row);
   const found = findAlternativeSlots(engineInput(), row);
+  const swapsFound = findSwapCandidates(engineInput(), row);
   const review = reviewRows();
   const memberIds = mates.map(r => String(r.studentId));
   const addOptions = state.students.filter(s => {
@@ -711,16 +727,31 @@ function sessionPopoverHtml() {
       <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
     </div>
     <div class="field">
-      <label>Or pick a valid time (same as dropping on the calendar)</label>
+      <label>Move to an open time</label>
       <div class="chip-row">`;
   if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
   else {
     const list = found.candidates || [];
-    if (!list.length) html += '<span class="meta">No other slots fit current locks and blackouts for this whole group.</span>';
+    if (!list.length) html += '<span class="meta">No open slots right now — try a swap below.</span>';
     list.slice(0, 24).forEach((c, n) => {
       html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
     });
     if (list.length > 24) html += `<span class="meta">+${list.length - 24} more — drag on the calendar to see all valid cells</span>`;
+  }
+  html += `</div></div>
+    <div class="field">
+      <label>Swap with another session</label>
+      <p class="meta">When the week is full, trade places with a group that can take your slot (and vice versa). Drag onto an amber-outlined block to swap.</p>
+      <div class="chip-row">`;
+  if (swapsFound.error) html += `<span class="meta">${esc(swapsFound.error)}</span>`;
+  else {
+    const swaps = swapsFound.swaps || [];
+    if (!swaps.length) html += '<span class="meta">No valid swaps with other unlocked sessions.</span>';
+    swaps.forEach((s, n) => {
+      html += `<button type="button" class="chip swap" onclick="applySwap(${n})" title="Trade places">
+        ↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}–${esc(minutesToTimeStr(s.otherEnd))}
+      </button>`;
+    });
   }
   html += `</div></div></div>`;
   return html;
@@ -854,7 +885,7 @@ function renderWeekBody() {
   }
   const cal = buildCalendarModel(log, state.settings, showAllWeeks, state.availability);
   let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered.</p>
-    <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it (everyone in the group moves together). Click a block to lock or edit members. Coverage is a report tab — edits happen on this calendar. Locked groups stay put when you regenerate.</p>
+    <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it, or onto an amber-outlined session to <b>swap</b> places. Click a block to lock, edit members, or pick a move/swap. Coverage is a report tab — edits happen on this calendar.</p>
     ${coverageBannerHtml()}
     <div class="stat-grid no-print">
       <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
@@ -985,9 +1016,42 @@ function moveSessionToCandidate(logIndex, candidate) {
     r.day = candidate.day;
     r.start = minutesToTimeStr(candidate.start);
     r.end = minutesToTimeStr(candidate.start + dur);
+    r.duration = dur;
     if (candidate.week && candidate.week !== ALL_WEEKS_KEY && candidate.week !== 'ALL') {
       r.week = 'Week ' + candidate.week;
     }
+  });
+  return true;
+}
+
+function swapSessionsByIndex(indexA, indexB) {
+  const a = state.scheduleLog[indexA];
+  const b = state.scheduleLog[indexB];
+  if (!a || !b) return false;
+  const aMates = sessionMateRows(state.scheduleLog, a);
+  const bMates = sessionMateRows(state.scheduleLog, b);
+  const aWhen = { day: a.day, start: a.start, end: a.end, week: a.week };
+  const bWhen = { day: b.day, start: b.start, end: b.end, week: b.week };
+  let aDur, bDur, aStartMin, bStartMin;
+  try {
+    aDur = timeStrToMinutes(a.end) - timeStrToMinutes(a.start);
+    bDur = timeStrToMinutes(b.end) - timeStrToMinutes(b.start);
+    aStartMin = timeStrToMinutes(aWhen.start);
+    bStartMin = timeStrToMinutes(bWhen.start);
+  } catch (e) { return false; }
+  aMates.forEach(r => {
+    r.day = bWhen.day;
+    r.start = bWhen.start;
+    r.end = minutesToTimeStr(bStartMin + aDur);
+    r.duration = aDur;
+    r.week = bWhen.week;
+  });
+  bMates.forEach(r => {
+    r.day = aWhen.day;
+    r.start = aWhen.start;
+    r.end = minutesToTimeStr(aStartMin + bDur);
+    r.duration = bDur;
+    r.week = aWhen.week;
   });
   return true;
 }
@@ -1004,9 +1068,25 @@ function applyAlt(n) {
   render();
 }
 
+function applySwap(n) {
+  if (altFor == null) return;
+  const found = findSwapCandidates(engineInput(), state.scheduleLog[altFor]);
+  const s = found.swaps && found.swaps[n];
+  if (!s) return;
+  const aName = state.scheduleLog[altFor].name;
+  if (!swapSessionsByIndex(altFor, s.otherIndex)) {
+    setStatus('Could not swap those sessions.', 'bad');
+    return;
+  }
+  refreshLiveReview('Swapped ' + aName + ' ↔ ' + s.otherLabel + '.');
+  altFor = null;
+  dragState = null;
+  render();
+}
+
 function clearDropHighlights() {
-  document.querySelectorAll('.cal-slot.drop-ok, .cal-slot.drop-hover').forEach(el => {
-    el.classList.remove('drop-ok', 'drop-hover');
+  document.querySelectorAll('.cal-slot.drop-ok, .cal-slot.swap-ok, .cal-slot.drop-hover').forEach(el => {
+    el.classList.remove('drop-ok', 'swap-ok', 'drop-hover');
   });
   document.querySelectorAll('.cal-grid.dnd-active').forEach(g => g.classList.remove('dnd-active'));
 }
@@ -1016,20 +1096,30 @@ function endDragVisual() {
   document.querySelectorAll('.sess.dragging').forEach(el => el.classList.remove('dragging'));
 }
 
+function swapForOccupiedSlot(slot) {
+  if (!dragState || !dragState.swaps || !dragState.swaps.length) return null;
+  const sess = slot.querySelector('.sess');
+  if (!sess) return null;
+  const idx = Number(sess.getAttribute('data-log-index'));
+  if (!Number.isFinite(idx) || !state.scheduleLog[idx]) return null;
+  const key = sessionKeyFromLogRow(state.scheduleLog[idx]);
+  return dragState.swaps.find(s => s.otherKey === key) || null;
+}
+
 function paintDropTargets() {
   clearDropHighlights();
   if (!dragState) return;
   document.querySelectorAll('.cal-grid').forEach(g => g.classList.add('dnd-active'));
   document.querySelectorAll('.cal-slot').forEach(slot => {
-    if (
-      candidateForSlot(
-        slot.getAttribute('data-day'),
-        slot.getAttribute('data-start'),
-        slot.getAttribute('data-week'),
-        slot.getAttribute('data-span')
-      )
-    ) {
+    const day = slot.getAttribute('data-day');
+    const start = slot.getAttribute('data-start');
+    const week = slot.getAttribute('data-week');
+    const span = slot.getAttribute('data-span');
+    if (candidateForSlot(day, start, week, span)) {
       slot.classList.add('drop-ok');
+    }
+    if (swapForOccupiedSlot(slot)) {
+      slot.classList.add('swap-ok');
     }
   });
 }
@@ -1053,23 +1143,29 @@ function bindCalendarDnD() {
         return;
       }
       const found = findAlternativeSlots(engineInput(), row);
-      if (found.error) {
+      const swapsFound = findSwapCandidates(engineInput(), row);
+      if (found.error && !(swapsFound.swaps || []).length) {
         e.preventDefault();
         setStatus(found.error, 'bad');
         return;
       }
-      if (!(found.candidates || []).length) {
+      const cands = found.candidates || [];
+      const swaps = swapsFound.swaps || [];
+      if (!cands.length && !swaps.length) {
         e.preventDefault();
-        setStatus('No valid alternate slots for this group right now.', 'bad');
+        setStatus('No open slots or valid swaps for this group right now.', 'bad');
         return;
       }
-      dragState = { index: idx, candidates: found.candidates || [] };
+      dragState = { index: idx, candidates: cands, swaps: swaps };
       el.classList.add('dragging');
       suppressSessionClick = true;
       e.dataTransfer.effectAllowed = 'move';
       try { e.dataTransfer.setData('text/plain', String(idx)); } catch (err) {}
       paintDropTargets();
-      setStatus('Drop on a green cell to move this group. Escape cancels.', 'ok');
+      const msg = swaps.length
+        ? ('Drop on green to move, or amber to swap (' + swaps.length + ' available). Escape cancels.')
+        : 'Drop on a green cell to move this group. Escape cancels.';
+      setStatus(msg, 'ok');
     });
     el.addEventListener('dragend', () => {
       dragState = null;
@@ -1083,13 +1179,13 @@ function bindCalendarDnD() {
     slot.dataset.dndBound = '1';
     slot.addEventListener('dragover', (e) => {
       if (!dragState) return;
-      const cand = candidateForSlot(
-        slot.getAttribute('data-day'),
-        slot.getAttribute('data-start'),
-        slot.getAttribute('data-week'),
-        slot.getAttribute('data-span')
-      );
-      if (!cand) return;
+      const day = slot.getAttribute('data-day');
+      const start = slot.getAttribute('data-start');
+      const week = slot.getAttribute('data-week');
+      const span = slot.getAttribute('data-span');
+      const cand = candidateForSlot(day, start, week, span);
+      const swap = swapForOccupiedSlot(slot);
+      if (!cand && !swap) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       slot.classList.add('drop-hover');
@@ -1099,20 +1195,33 @@ function bindCalendarDnD() {
       if (!dragState) return;
       e.preventDefault();
       e.stopPropagation();
-      const cand = candidateForSlot(
-        slot.getAttribute('data-day'),
-        slot.getAttribute('data-start'),
-        slot.getAttribute('data-week'),
-        slot.getAttribute('data-span')
-      );
+      const day = slot.getAttribute('data-day');
+      const start = slot.getAttribute('data-start');
+      const week = slot.getAttribute('data-week');
+      const span = slot.getAttribute('data-span');
+      const swap = swapForOccupiedSlot(slot);
+      const cand = candidateForSlot(day, start, week, span);
+      const idx = dragState.index;
+      const studentId = state.scheduleLog[idx] && state.scheduleLog[idx].studentId;
+      const aName = state.scheduleLog[idx] && state.scheduleLog[idx].name;
+      dragState = null;
+      endDragVisual();
+      if (swap) {
+        if (!swapSessionsByIndex(idx, swap.otherIndex)) {
+          setStatus('That swap is not valid.', 'bad');
+          return;
+        }
+        altFor = null;
+        refreshLiveReview('Swapped ' + aName + ' ↔ ' + swap.otherLabel + '.');
+        suppressSessionClick = true;
+        render();
+        setTimeout(() => { suppressSessionClick = false; }, 80);
+        return;
+      }
       if (!cand) {
         setStatus('That slot is not valid for this group.', 'bad');
         return;
       }
-      const idx = dragState.index;
-      const studentId = state.scheduleLog[idx] && state.scheduleLog[idx].studentId;
-      dragState = null;
-      endDragVisual();
       moveSessionToCandidate(idx, cand);
       altFor = state.scheduleLog.findIndex(r =>
         String(r.studentId) === String(studentId) && r.day === cand.day &&
@@ -1198,12 +1307,18 @@ function openAlts(i) { altFor = i; scheduleTab = 'sessions'; render(); }
 function renderAlts() {
   const row = state.scheduleLog[altFor];
   const found = findAlternativeSlots(engineInput(), row);
-  if (found.error) return `<div class="card">${esc(found.error)}</div>`;
-  let html = `<div class="card"><h3>Other times for ${esc(row.name)}</h3><p class="meta">Up to 24 slots that fit current locks and blackouts. Click to move this session (group members move together if they share a group id).</p><div class="chip-row">`;
-  found.candidates.forEach((c, n) => {
+  const swapsFound = findSwapCandidates(engineInput(), row);
+  if (found.error && !(swapsFound.swaps || []).length) return `<div class="card">${esc(found.error)}</div>`;
+  let html = `<div class="card"><h3>Other times for ${esc(row.name)}</h3><p class="meta">Open slots that fit current locks and blackouts. Group members move together.</p><div class="chip-row">`;
+  (found.candidates || []).forEach((c, n) => {
     html += `<button class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
   });
-  if (!found.candidates.length) html += '<span class="meta">None available.</span>';
+  if (!(found.candidates || []).length) html += '<span class="meta">No open slots — try a swap.</span>';
+  html += `</div><h3 style="margin-top:14px">Swap with…</h3><p class="meta">Trade places when the calendar is full. Both groups must fit each other’s time.</p><div class="chip-row">`;
+  (swapsFound.swaps || []).forEach((s, n) => {
+    html += `<button class="chip swap" onclick="applySwap(${n})">↔ ${esc(s.otherLabel)} · ${esc(s.otherDay)} ${esc(minutesToTimeStr(s.otherStart))}–${esc(minutesToTimeStr(s.otherEnd))}</button>`;
+  });
+  if (!(swapsFound.swaps || []).length) html += '<span class="meta">No valid swaps.</span>';
   return html + '</div><button class="ghost" onclick="altFor=null;render()">Close</button></div>';
 }
 

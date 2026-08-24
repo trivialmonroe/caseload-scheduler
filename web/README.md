@@ -6,7 +6,7 @@ Open `index.html` in a browser (double-click, or serve this folder). No install,
 - **CSV** import/export per table (students, hours, grades, student blocks, schedule). Headers are listed on Import / export. CSV can **replace** a table or **merge** (students match by ID).
 - **Generate schedule** runs the same engine as the Sheets build. **Undo generate** restores the previous schedule for this browser tab only.
 - First visit starts empty. A short wizard walks hours → grade lunches → first student, or load the sample caseload.
-- After generate: on the **week calendar**, drag sessions onto green valid cells to rearrange the finished schedule, or click a block to lock / edit members. Coverage is a report tab; edits happen on the calendar. Coverage revalidates live (under/over alerts).
+- After generate: on the **week calendar**, drag sessions onto green cells to move, or onto amber-outlined sessions to **swap** when the schedule is full. Click a block to lock / edit members. Coverage is a report tab; edits happen on the calendar. Coverage revalidates live (under/over alerts).
 - **Print…** lets you choose times, teachers, group IDs, grade legend, coverage summary, compact layout, and week range.
 - Students can belong to multiple named groups (comma-separated Group IDs).
 - Individual students can be marked **No Group** to stay out of auto-grouping.
