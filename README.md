@@ -155,6 +155,10 @@ It schedules the *most constrained* student/session first (the one with the fewe
 ## Development
 This project lives in git, but Apps Script itself has no native git integration — the workflow above (copy/paste into the web editor) is the zero-setup path and works fine for personal use.
 
+### Standalone HTML (no Google account, no install)
+
+For a fully self-contained version that runs in any browser without Google Sheets or clasp, open **`standalone/CaseloadScheduler.html`**. It embeds the same scheduling engine, preloads a sample caseload, and writes results to in-page Schedule Log / Schedule Review tables (data saved in your browser via localStorage). See the About tab inside the file for usage.
+
 If you want real local-editor + git + Apps Script syncing, Google's [`clasp`](https://github.com/google/clasp) CLI is the standard tool: `npm install -g @google/clasp`, `clasp login`, `clasp clone <scriptId>` (or `clasp create` for a new project), then `clasp push`/`clasp pull` to sync this folder with the live Apps Script project. The included `appsscript.json` is clasp's expected manifest file — it's ignored by the plain copy/paste workflow, so you don't need to touch it unless you adopt clasp.
 
 Every function in every `.gs` file shares one global scope (that's how Apps Script works — no imports/exports needed between files), so the six-file split is purely organizational. Reading `SchedulingEngine.gs` end to end is the fastest way to understand the actual algorithm; everything else is setup, I/O, or user-triggered actions around it.

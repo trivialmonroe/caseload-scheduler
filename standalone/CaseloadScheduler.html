@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caseload Scheduler</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #fff;
+      --border: #dadce0;
+      --accent: #1a73e8;
+      --accent-hover: #1557b0;
+      --input-bg: #f1f3f4;
+      --green: #188038;
+      --red: #d93025;
+      --header: #202124;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      background: var(--bg);
+      color: var(--header);
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    header .sub { color: #5f6368; font-size: 0.85rem; }
+    .actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+    button, .btn {
+      font: inherit;
+      padding: 8px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      cursor: pointer;
+    }
+    button:hover { background: var(--input-bg); }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    #statusBar {
+      padding: 8px 20px;
+      background: #e8f0fe;
+      font-size: 13px;
+      display: none;
+    }
+    #statusBar.show { display: block; }
+    #statusBar.error { background: #fce8e6; color: var(--red); }
+    #statusBar.ok { background: #e6f4ea; color: var(--green); }
+    nav.tabs {
+      display: flex;
+      gap: 4px;
+      padding: 8px 20px 0;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    nav.tabs button {
+      border: none;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      background: transparent;
+      padding: 10px 14px;
+      color: #5f6368;
+    }
+    nav.tabs button.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 600;
+    }
+    main { padding: 16px 20px 40px; max-width: 1200px; margin: 0 auto; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 8px; font-size: 1rem; }
+    .hint { color: #5f6368; font-size: 12px; margin: 0 0 12px; line-height: 1.4; }
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.data th, table.data td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+    }
+    table.data th { background: #434343; color: #fff; font-weight: 600; }
+    table.data input, table.data select {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font: inherit;
+      padding: 4px;
+    }
+    table.data tr:nth-child(even) { background: #fafafa; }
+    table.data tr.under { background: #fce8e6; }
+    table.data tr.met { background: #d9ead3; }
+    table.data tr.auto-group { background: #d9d2e9; }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 120px;
+      gap: 8px;
+      max-width: 480px;
+    }
+    .settings-grid label { padding: 6px 0; }
+    .settings-grid input, .settings-grid select {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .summary {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    footer {
+      text-align: center;
+      padding: 16px;
+      color: #5f6368;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Caseload Scheduler</h1>
+      <div class="sub">Self-contained — open this file in any browser, no install</div>
+    </div>
+    <div class="actions">
+      <button type="button" onclick="loadSampleData()">Load sample caseload</button>
+      <button type="button" onclick="validateDataUI()">Validate</button>
+      <button type="button" class="primary" onclick="generateScheduleUI()">Generate Schedule</button>
+    </div>
+  </header>
+  <div id="statusBar"></div>
+
+  <nav class="tabs" id="tabNav"></nav>
+  <main id="main"></main>
+  <footer>Data stays in your browser (localStorage). Same scheduling engine as the Google Sheets version.</footer>
+
+<script>
+'use strict';
+
+// ─── Constants (from Constants.gs) ─────────────────────────────────────────
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+const DAY_INDEX = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4 };
+const ALL_WEEKS_KEY = 'ALL';
+const ANY_WEEK_KEY = 'ANY';
+
+const DEFAULT_SETTINGS = {
+  slotIncrement: 5,
+  schoolDays: DAYS.slice(),
+  minSessionLength: 15,
+  maxSessionLength: 60,
+  weeksPerQuarter: 9,
+  startingWeekPattern: 'A',
+  groupRescueExtraMinutes: 10,
+  maxGroupSize: 6,
+  preferConsistentPattern: true,
+  showTeacherInfo: true,
+  frontLoadFirstSessions: true,
+};
+
+// ─── Data helpers (from DataHelpers.gs) ─────────────────────────────────────
+function timeStrToMinutes(t) {
+  if (t instanceof Date) return t.getHours() * 60 + t.getMinutes();
+  const s = String(t).trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})\s*([AP]M)?$/i);
+  if (!m) throw new Error('Bad time format: ' + t);
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ampm = m[3];
+  if (ampm) {
+    if (/PM/i.test(ampm) && h !== 12) h += 12;
+    if (/AM/i.test(ampm) && h === 12) h = 0;
+  }
+  return h * 60 + min;
+}
+
+function minutesToTimeStr(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ampm = h < 12 ? 'AM' : 'PM';
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+}
+
+function overlaps(a, b, c, d) { return a < d && c < b; }
+function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+function roundToIncrement(mins, inc) { return Math.max(inc, Math.round(mins / inc) * inc); }
+
+function parseDayList(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  const lower = s.toLowerCase();
+  if (lower === 'all' || lower === 'everyday' || lower === 'every day' || lower === 'mon-fri' || lower === 'monday-friday') return DAYS.slice();
+  const rangeMatch = lower.match(/^([a-z]{3,})\s*-\s*([a-z]{3,})$/);
+  if (rangeMatch) {
+    const startIdx = DAY_INDEX[rangeMatch[1].slice(0, 3)];
+    const endIdx = DAY_INDEX[rangeMatch[2].slice(0, 3)];
+    if (startIdx !== undefined && endIdx !== undefined && startIdx <= endIdx) return DAYS.slice(startIdx, endIdx + 1);
+  }
+  const parts = s.split(/[,/&]+/).map(p => p.trim()).filter(Boolean);
+  const result = [];
+  parts.forEach(p => {
+    const idx = DAY_INDEX[p.toLowerCase().slice(0, 3)];
+    if (idx !== undefined && result.indexOf(DAYS[idx]) === -1) result.push(DAYS[idx]);
+  });
+  return result;
+}
+
+function buildSettings(raw) {
+  const settings = Object.assign({}, DEFAULT_SETTINGS);
+  if (raw) Object.assign(settings, raw);
+  if (settings.minSessionLength > settings.maxSessionLength) settings.minSessionLength = settings.maxSessionLength;
+  settings.weeksList = [];
+  for (let w = 1; w <= settings.weeksPerQuarter; w++) settings.weeksList.push(w);
+  return settings;
+}
+
+function loadProviderAvailability(rows) {
+  const buckets = { ALL: {}, A: {}, B: {} };
+  ['ALL', 'A', 'B'].forEach(key => DAYS.forEach(d => buckets[key][d] = []));
+  (rows || []).forEach(r => {
+    const days = parseDayList(r.day);
+    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end) };
+    const patternRaw = String(r.pattern || '').trim().toUpperCase();
+    const bucket = (patternRaw === 'A' || patternRaw === 'B') ? patternRaw : 'ALL';
+    days.forEach(day => buckets[bucket][day].push(entry));
+  });
+  return buckets;
+}
+
+function getWeekPattern(weekNum, settings) {
+  const isOddWeek = weekNum % 2 === 1;
+  const startsA = settings.startingWeekPattern === 'A';
+  return isOddWeek ? (startsA ? 'A' : 'B') : (startsA ? 'B' : 'A');
+}
+
+function mergeOverlapping(windows) {
+  if (!windows.length) return [];
+  const sorted = windows.slice().sort((a, b) => a.start - b.start);
+  const merged = [Object.assign({}, sorted[0])];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    if (sorted[i].start <= last.end) last.end = Math.max(last.end, sorted[i].end);
+    else merged.push(Object.assign({}, sorted[i]));
+  }
+  return merged;
+}
+
+function intersectWindows(listA, listB) {
+  const result = [];
+  listA.forEach(a => listB.forEach(b => {
+    const start = Math.max(a.start, b.start);
+    const end = Math.min(a.end, b.end);
+    if (start < end) result.push({ start, end });
+  }));
+  return result;
+}
+
+function availabilityForWeek(weekNum, availByPattern, settings) {
+  const pattern = getWeekPattern(weekNum, settings);
+  const merged = {};
+  DAYS.forEach(d => merged[d] = (availByPattern.ALL[d] || []).concat(availByPattern[pattern][d] || []));
+  return merged;
+}
+
+function effectiveAvailability(weeksToCheck, availByPattern, settings) {
+  const perWeekDayMaps = weeksToCheck.map(w => availabilityForWeek(w, availByPattern, settings));
+  if (perWeekDayMaps.length === 1) return perWeekDayMaps[0];
+  const result = {};
+  DAYS.forEach(day => {
+    let current = mergeOverlapping(perWeekDayMaps[0][day] || []);
+    for (let i = 1; i < perWeekDayMaps.length && current.length; i++) {
+      current = intersectWindows(current, perWeekDayMaps[i][day] || []);
+    }
+    result[day] = current;
+  });
+  return result;
+}
+
+function loadGradeBlackouts(rows) {
+  const map = {};
+  (rows || []).forEach(r => {
+    const grade = String(r.grade).trim();
+    const days = parseDayList(r.day);
+    if (!map[grade]) { map[grade] = {}; DAYS.forEach(d => map[grade][d] = []); }
+    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end), reason: r.reason || 'Grade schedule' };
+    days.forEach(day => map[grade][day].push(entry));
+  });
+  return map;
+}
+
+function loadStudentConstraints(rows) {
+  const map = {};
+  (rows || []).forEach(r => {
+    const id = String(r.studentId).trim();
+    const days = parseDayList(r.day);
+    if (!map[id]) { map[id] = {}; DAYS.forEach(d => map[id][d] = []); }
+    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end), reason: r.reason || 'Other service' };
+    days.forEach(day => map[id][day].push(entry));
+  });
+  return map;
+}
+
+function loadStudents(rows) {
+  return (rows || []).map(s => {
+    let fixedStart = null;
+    if (s.fixedStart) {
+      try { fixedStart = timeStrToMinutes(s.fixedStart); } catch (e) { fixedStart = null; }
+    }
+    return {
+      id: String(s.id).trim(),
+      firstName: s.firstName,
+      lastName: s.lastName,
+      grade: String(s.grade).trim(),
+      serviceType: String(s.serviceType).trim(),
+      groupId: s.groupId ? String(s.groupId).trim() : '',
+      frequencyType: (String(s.frequencyType).trim().toLowerCase() === 'quarterly') ? 'Quarterly' : 'Weekly',
+      minutesPerWeek: Number(s.minutesPerWeek) || 0,
+      preferredSessionLength: s.preferredSessionLength ? Number(s.preferredSessionLength) : null,
+      sessionsPerQuarter: Number(s.sessionsPerQuarter) || 0,
+      quarterlySessionLength: Number(s.quarterlySessionLength) || 0,
+      status: String(s.status || 'Active').trim(),
+      teacher: s.teacher ? String(s.teacher).trim() : '',
+      fixedDay: s.fixedDay ? String(s.fixedDay).trim() : '',
+      fixedStart,
+    };
+  }).filter(s => s.id && s.status.toLowerCase() === 'active');
+}
+
+function loadLockedSessions(logRows) {
+  const groups = {};
+  (logRows || []).forEach(r => {
+    if (String(r.locked || '').trim().toLowerCase() !== 'yes') return;
+    const studentId = String(r.studentId).trim();
+    const groupId = r.groupId ? String(r.groupId).trim() : '';
+    const reqId = groupId || studentId;
+    const weekLabelRaw = String(r.week).trim();
+    const week = weekLabelRaw === 'Every Week' ? ALL_WEEKS_KEY : (Number(weekLabelRaw.replace(/[^0-9]/g, '')) || 1);
+    let start, end;
+    try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
+    const key = reqId + '|' + week + '|' + r.day + '|' + start + '|' + end;
+    if (!groups[key]) groups[key] = { reqId, week, day: r.day, start, end, studentIds: [] };
+    groups[key].studentIds.push(studentId);
+  });
+  return Object.values(groups);
+}
+
+function getStudentBlackouts(student, gradeBlackouts, studentConstraints) {
+  const merged = {};
+  DAYS.forEach(d => merged[d] = []);
+  const gb = gradeBlackouts[student.grade];
+  if (gb) DAYS.forEach(d => { merged[d] = merged[d].concat(gb[d] || []); });
+  const sc = studentConstraints[student.id];
+  if (sc) DAYS.forEach(d => { merged[d] = merged[d].concat(sc[d] || []); });
+  return merged;
+}
+
+function weeksForEntry(weekValue, settings) {
+  return weekValue === ALL_WEEKS_KEY ? settings.weeksList : [weekValue];
+}
+
+function weekLabel(week) {
+  return week === ALL_WEEKS_KEY ? 'Every Week' : 'Week ' + week;
+}
+
+function gradeSortValue(grade) {
+  const g = String(grade).trim().toUpperCase();
+  if (g === 'K' || g === 'KG' || g === 'KINDER' || g === 'KINDERGARTEN') return 0;
+  const n = parseInt(g, 10);
+  return isNaN(n) ? 999 : n;
+}
+
+function emptyBookingsByWeek(weeksList) {
+  const obj = {};
+  weeksList.forEach(w => { obj[w] = {}; DAYS.forEach(d => obj[w][d] = []); });
+  return obj;
+}
+
+// ─── Scheduling engine (from SchedulingEngine.gs) ─────────────────────────
+function computeWeeklyPlan(minutesPerWeek, settings, preferredLength) {
+  const minLen = settings.minSessionLength;
+  const maxLen = settings.maxSessionLength;
+  const maxDays = settings.schoolDays.length;
+  const targetLen = preferredLength ? clamp(preferredLength, minLen, maxLen) : maxLen;
+  let n = Math.max(1, Math.ceil(minutesPerWeek / targetLen));
+  const cappedDays = n > maxDays;
+  if (cappedDays) n = maxDays;
+  const base = Math.floor(minutesPerWeek / n);
+  const remainder = minutesPerWeek - base * n;
+  const lengths = [];
+  for (let i = 0; i < n; i++) {
+    let len = base + (i < remainder ? 1 : 0);
+    len = roundToIncrement(clamp(len, minLen, maxLen), settings.slotIncrement);
+    lengths.push(len);
+  }
+  const deliveredTotal = lengths.reduce((a, b) => a + b, 0);
+  return { lengths, cappedDays, deliveredTotal, shortfall: Math.max(0, minutesPerWeek - deliveredTotal) };
+}
+
+function buildRequirementSet(reqId, members, settings, warnings) {
+  const primary = members[0];
+  const hasFixedTime = !!(primary.fixedDay && primary.fixedStart !== null && primary.fixedStart !== undefined);
+  if (primary.frequencyType === 'Quarterly') {
+    const len = primary.quarterlySessionLength || settings.minSessionLength;
+    const n = primary.sessionsPerQuarter || 0;
+    const sessions = [];
+    for (let i = 1; i <= n; i++) {
+      const session = { reqId, members, sessionLength: len, week: ANY_WEEK_KEY, sessionIndex: i, totalSessions: n, scheduled: null };
+      if (hasFixedTime) { session.fixedDay = primary.fixedDay; session.fixedStart = primary.fixedStart; }
+      sessions.push(session);
+    }
+    if (len < settings.minSessionLength || len > settings.maxSessionLength) {
+      warnings.push({ members, reqId, message: 'Quarterly session length (' + len + ' min) outside Min/Max.' });
+    }
+    return sessions;
+  }
+  const plan = computeWeeklyPlan(primary.minutesPerWeek, settings, primary.preferredSessionLength);
+  const sessions = plan.lengths.map((len, idx) => {
+    const session = { reqId, members, sessionLength: len, week: ALL_WEEKS_KEY, sessionIndex: idx + 1, totalSessions: plan.lengths.length, scheduled: null };
+    if (hasFixedTime && idx === 0) { session.fixedDay = primary.fixedDay; session.fixedStart = primary.fixedStart; }
+    return session;
+  });
+  if (plan.shortfall > 0) {
+    warnings.push({ members, reqId, message: 'Needs ' + primary.minutesPerWeek + ' min/week but max deliverable is ' + plan.deliveredTotal + ' min/week.' });
+  }
+  return sessions;
+}
+
+function buildRequirements(students, settings) {
+  const requirements = [];
+  const warnings = [];
+  const groups = {};
+  students.forEach(s => {
+    if (s.serviceType.toLowerCase() === 'group' && s.groupId) {
+      if (!groups[s.groupId]) groups[s.groupId] = [];
+      groups[s.groupId].push(s);
+    } else {
+      requirements.push(buildRequirementSet(s.id, [s], settings, warnings));
+    }
+  });
+  Object.keys(groups).forEach(gid => requirements.push(buildRequirementSet(gid, groups[gid], settings, warnings)));
+  return { requirements, warnings };
+}
+
+function findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, excludeDays, reqDaysUsed) {
+  const duration = session.sessionLength;
+  const memberBlackouts = session.members.map(m => getStudentBlackouts(m, gradeBlackouts, studentConstraints));
+  const reqId = session.reqId;
+  function candidatesForWeekSet(weeksToCheck, excluded) {
+    const candidates = [];
+    const providerAvail = effectiveAvailability(weeksToCheck, availByPattern, settings);
+    DAYS.forEach(day => {
+      if (excluded.indexOf(day) !== -1) return;
+      (providerAvail[day] || []).forEach(win => {
+        for (let start = win.start; start + duration <= win.end; start += settings.slotIncrement) {
+          const end = start + duration;
+          const providerBusy = weeksToCheck.some(w => (providerBookingsByWeek[w][day] || []).some(b => overlaps(start, end, b.start, b.end)));
+          if (providerBusy) continue;
+          const memberConflict = session.members.some((m, idx) => {
+            if ((memberBlackouts[idx][day] || []).some(b => overlaps(start, end, b.start, b.end))) return true;
+            return weeksToCheck.some(w => (memberBookingsByWeek[m.id][w][day] || []).some(b => overlaps(start, end, b.start, b.end)));
+          });
+          if (memberConflict) continue;
+          candidates.push({ day, start, end });
+        }
+      });
+    });
+    return candidates;
+  }
+  if (session.week === ANY_WEEK_KEY) {
+    let all = [];
+    settings.weeksList.forEach(w => {
+      const excluded = (reqDaysUsed && reqDaysUsed[reqId] && reqDaysUsed[reqId][String(w)]) || [];
+      candidatesForWeekSet([w], excluded).forEach(c => all.push({ week: w, day: c.day, start: c.start, end: c.end }));
+    });
+    return all;
+  }
+  const weeksToCheck = weeksForEntry(session.week, settings);
+  return candidatesForWeekSet(weeksToCheck, excludeDays || []).map(c => Object.assign({ week: session.week }, c));
+}
+
+function isReqIdRepresented(scheduled, session) {
+  return session.members.some(sm => scheduled.some(s => s.members.some(m => m.id === sm.id)));
+}
+
+function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState) {
+  const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
+  const candidates = hostCandidates.filter(entry => {
+    if (entry.members.some(m => m.id === student.id)) return false;
+    if (entry.members.length >= settings.maxGroupSize) return false;
+    const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;
+    if (needsEveryWeek !== hostIsEveryWeek) return false;
+    const extra = (entry.end - entry.start) - sessionLength;
+    return extra >= 0 && extra <= settings.groupRescueExtraMinutes;
+  });
+  candidates.sort((a, b) => {
+    const da = Math.min.apply(null, a.members.map(m => Math.abs(gradeSortValue(m.grade) - gradeSortValue(student.grade))));
+    const db = Math.min.apply(null, b.members.map(m => Math.abs(gradeSortValue(m.grade) - gradeSortValue(student.grade))));
+    if (da !== db) return da - db;
+    return ((a.end - a.start) - sessionLength) - ((b.end - b.start) - sessionLength);
+  });
+  for (let i = 0; i < candidates.length; i++) {
+    const host = candidates[i];
+    const weeksToCheck = weeksForEntry(host.week, settings);
+    if ((blackouts[host.day] || []).some(b => overlaps(host.start, host.end, b.start, b.end))) continue;
+    const weekKeyForHost = String(host.week);
+    const daysAlreadyUsed = (reqDaysUsed[student.id] && reqDaysUsed[student.id][weekKeyForHost]) || [];
+    if (daysAlreadyUsed.indexOf(host.day) !== -1) continue;
+    const ownConflict = weeksToCheck.some(w => (memberBookingsByWeek[student.id][w][host.day] || []).some(b => overlaps(host.start, host.end, b.start, b.end)));
+    if (ownConflict) continue;
+    if (!host.groupId) { groupIdState.counter++; host.groupId = 'AUTO-GROUP-' + groupIdState.counter; }
+    host.members = host.members.map(m => Object.assign({}, m, { groupId: host.groupId }));
+    host.members.push(Object.assign({}, student, { groupId: host.groupId }));
+    weeksToCheck.forEach(w => memberBookingsByWeek[student.id][w][host.day].push({ start: host.start, end: host.end }));
+    if (!reqDaysUsed[student.id]) reqDaysUsed[student.id] = {};
+    if (!reqDaysUsed[student.id][weekKeyForHost]) reqDaysUsed[student.id][weekKeyForHost] = [];
+    reqDaysUsed[student.id][weekKeyForHost].push(host.day);
+    return host;
+  }
+  return null;
+}
+
+function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, reqDaysUsed, individualsById, groupIdState) {
+  if (!settings.frontLoadFirstSessions) return;
+  const byReqId = {};
+  pending.forEach(session => {
+    if (session.week !== ANY_WEEK_KEY) return;
+    if (isReqIdRepresented(scheduled, session)) return;
+    if (!byReqId[session.reqId] || session.sessionLength > byReqId[session.reqId].sessionLength) byReqId[session.reqId] = session;
+  });
+  Object.values(byReqId).sort((a, b) => b.sessionLength - a.sessionLength).forEach(session => {
+    const allCandidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, [], reqDaysUsed);
+    const earlyOnly = allCandidates.filter(c => c.week <= 2).sort((a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start);
+    if (earlyOnly.length) {
+      const pick = earlyOnly[0];
+      providerBookingsByWeek[pick.week][pick.day].push({ start: pick.start, end: pick.end });
+      session.members.forEach(m => memberBookingsByWeek[m.id][pick.week][pick.day].push({ start: pick.start, end: pick.end }));
+      const weekKey = String(pick.week);
+      if (!reqDaysUsed[session.reqId]) reqDaysUsed[session.reqId] = {};
+      if (!reqDaysUsed[session.reqId][weekKey]) reqDaysUsed[session.reqId][weekKey] = [];
+      reqDaysUsed[session.reqId][weekKey].push(pick.day);
+      scheduled.push({ reqId: session.reqId, members: session.members, week: pick.week, day: pick.day, start: pick.start, end: pick.end, sessionIndex: session.sessionIndex, totalSessions: session.totalSessions });
+      const idx = pending.indexOf(session);
+      if (idx !== -1) pending.splice(idx, 1);
+      return;
+    }
+    const primary = session.members[0];
+    if (session.members.length !== 1 || !individualsById[primary.id]) return;
+    const hostCandidates = scheduled.filter(entry => (entry.week === 1 || entry.week === 2) && entry.members.every(m => individualsById[m.id]));
+    const host = tryJoinCompatibleHost(primary, session.sessionLength, false, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
+    if (host) { const idx = pending.indexOf(session); if (idx !== -1) pending.splice(idx, 1); }
+  });
+}
+
+function attemptGroupRescue(unscheduled, scheduled, individualsById, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState) {
+  const rescuedUnscheduledEntries = [];
+  let remaining = unscheduled.filter(u => u.session.members.length === 1 && individualsById[u.session.members[0].id]);
+  let progress = true;
+  while (progress && remaining.length > 0) {
+    progress = false;
+    remaining.sort((a, b) => b.session.sessionLength - a.session.sessionLength);
+    const stillRemaining = [];
+    for (let idx = 0; idx < remaining.length; idx++) {
+      const u = remaining[idx];
+      const session = u.session;
+      const student = session.members[0];
+      const needsEveryWeek = session.week === ALL_WEEKS_KEY;
+      const hostCandidates = scheduled.filter(entry => entry.members.every(m => individualsById[m.id]));
+      const host = tryJoinCompatibleHost(student, session.sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
+      if (host) { rescuedUnscheduledEntries.push(u); progress = true; continue; }
+      stillRemaining.push(u);
+    }
+    remaining = stillRemaining;
+  }
+  return rescuedUnscheduledEntries;
+}
+
+function runSchedulingEngine(input) {
+  const settings = buildSettings(input.settings);
+  const availByPattern = loadProviderAvailability(input.availability);
+  const gradeBlackouts = loadGradeBlackouts(input.grades);
+  const studentConstraints = loadStudentConstraints(input.constraints);
+  const students = loadStudents(input.students);
+  if (!students.length) return { error: 'No active students.' };
+
+  const lockedSessions = loadLockedSessions(input.scheduleLog);
+  const studentsById = {};
+  students.forEach(s => { studentsById[s.id] = s; });
+  const individualsById = {};
+  students.forEach(s => { if (s.serviceType.toLowerCase() === 'individual') individualsById[s.id] = s; });
+  const groupIdState = { counter: 0 };
+
+  const { requirements: requirementSets, warnings: capacityWarnings } = buildRequirements(students, settings);
+  let pending = [].concat.apply([], requirementSets);
+  const providerBookingsByWeek = emptyBookingsByWeek(settings.weeksList);
+  const memberBookingsByWeek = {};
+  students.forEach(s => { memberBookingsByWeek[s.id] = emptyBookingsByWeek(settings.weeksList); });
+  const reqDaysUsed = {};
+  const scheduled = [];
+  let unscheduled = [];
+
+  lockedSessions.forEach(ls => {
+    const members = ls.studentIds.map(id => studentsById[id]).filter(Boolean);
+    if (!members.length) return;
+    const naturalReqIds = new Set();
+    members.forEach(m => naturalReqIds.add((m.serviceType.toLowerCase() === 'group' && m.groupId) ? m.groupId : m.id));
+    const duration = ls.end - ls.start;
+    naturalReqIds.forEach(reqId => {
+      let bestIdx = -1, bestDiff = Infinity;
+      pending.forEach((session, idx) => {
+        if (session.reqId !== reqId) return;
+        const diff = Math.abs(session.sessionLength - duration);
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = idx; }
+      });
+      if (bestIdx !== -1) pending.splice(bestIdx, 1);
+    });
+    weeksForEntry(ls.week, settings).forEach(w => {
+      providerBookingsByWeek[w][ls.day].push({ start: ls.start, end: ls.end });
+      members.forEach(m => memberBookingsByWeek[m.id][w][ls.day].push({ start: ls.start, end: ls.end }));
+    });
+    const weekKey = String(ls.week);
+    if (!reqDaysUsed[ls.reqId]) reqDaysUsed[ls.reqId] = {};
+    if (!reqDaysUsed[ls.reqId][weekKey]) reqDaysUsed[ls.reqId][weekKey] = [];
+    reqDaysUsed[ls.reqId][weekKey].push(ls.day);
+    scheduled.push({ reqId: ls.reqId, members, week: ls.week, day: ls.day, start: ls.start, end: ls.end, sessionIndex: 0, totalSessions: 0, locked: true });
+  });
+
+  const fixedPending = pending.filter(s => s.fixedDay && s.fixedStart != null);
+  pending = pending.filter(s => !(s.fixedDay && s.fixedStart != null));
+  fixedPending.forEach(session => {
+    const weekKey = String(session.week);
+    const excludeDays = (reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][weekKey]) || [];
+    const matches = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, excludeDays, reqDaysUsed)
+      .filter(c => c.day === session.fixedDay && c.start === session.fixedStart);
+    if (!matches.length) {
+      unscheduled.push({ session, reason: 'Fixed time unavailable' });
+      return;
+    }
+    matches.sort((a, b) => {
+      const usedA = (reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][String(a.week)]) || [];
+      const usedB = (reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][String(b.week)]) || [];
+      if (usedA.length !== usedB.length) return usedA.length - usedB.length;
+      return (a.week === ALL_WEEKS_KEY ? 0 : a.week) - (b.week === ALL_WEEKS_KEY ? 0 : b.week);
+    });
+    const match = matches[0];
+    weeksForEntry(match.week, settings).forEach(w => {
+      providerBookingsByWeek[w][match.day].push({ start: match.start, end: match.end });
+      session.members.forEach(m => memberBookingsByWeek[m.id][w][match.day].push({ start: match.start, end: match.end }));
+    });
+    const wk = String(match.week);
+    if (!reqDaysUsed[session.reqId]) reqDaysUsed[session.reqId] = {};
+    if (!reqDaysUsed[session.reqId][wk]) reqDaysUsed[session.reqId][wk] = [];
+    reqDaysUsed[session.reqId][wk].push(match.day);
+    scheduled.push({ reqId: session.reqId, members: session.members, week: match.week, day: match.day, start: match.start, end: match.end, sessionIndex: session.sessionIndex, totalSessions: session.totalSessions });
+  });
+
+  frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, reqDaysUsed, individualsById, groupIdState);
+
+  while (pending.length > 0) {
+    let bestIdx = -1, bestCandidates = null, bestCount = Infinity, bestIsFirstOcc = false;
+    pending.forEach((session, idx) => {
+      const weekKey = String(session.week);
+      const excludeDays = (reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][weekKey]) || [];
+      const cands = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, excludeDays, reqDaysUsed);
+      const isFirstOcc = settings.frontLoadFirstSessions && session.week === ANY_WEEK_KEY && !isReqIdRepresented(scheduled, session);
+      const better = cands.length < bestCount ||
+        (cands.length === bestCount && isFirstOcc && !bestIsFirstOcc) ||
+        (cands.length === bestCount && isFirstOcc === bestIsFirstOcc && bestIdx !== -1 && session.sessionLength > pending[bestIdx].sessionLength);
+      if (better) { bestCount = cands.length; bestIdx = idx; bestCandidates = cands; bestIsFirstOcc = isFirstOcc; }
+    });
+    const session = pending[bestIdx];
+    if (bestCandidates.length === 0) {
+      unscheduled.push({ session, reason: 'No slot satisfies availability + blackouts + one-session-per-day limit' });
+      pending.splice(bestIdx, 1);
+      continue;
+    }
+    const reqWeekLoad = (c) => session.week !== ANY_WEEK_KEY ? 0 : ((reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][String(c.week)]) || []).length;
+    const isFirstOccurrence = !isReqIdRepresented(scheduled, session);
+    const earlyStartBonus = (c) => (!settings.frontLoadFirstSessions || session.week !== ANY_WEEK_KEY || !isFirstOccurrence) ? 0 : ((c.week === ALL_WEEKS_KEY ? 0 : c.week) <= 2 ? 0 : 1);
+    const matchesEstablishedPattern = (c) => (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) ? 0 : (scheduled.some(s => s.reqId === session.reqId && s.day === c.day && s.start === c.start) ? 0 : 1);
+    const dayLoad = (c) => weeksForEntry(c.week, settings).reduce((sum, w) => sum + ((providerBookingsByWeek[w][c.day] || []).length), 0);
+    bestCandidates.sort((a, b) => {
+      let d = reqWeekLoad(a) - reqWeekLoad(b); if (d) return d;
+      d = earlyStartBonus(a) - earlyStartBonus(b); if (d) return d;
+      d = matchesEstablishedPattern(a) - matchesEstablishedPattern(b); if (d) return d;
+      d = dayLoad(a) - dayLoad(b); if (d) return d;
+      const wa = a.week === ALL_WEEKS_KEY ? 0 : a.week, wb = b.week === ALL_WEEKS_KEY ? 0 : b.week;
+      if (wa !== wb) return wa - wb;
+      return DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start;
+    });
+    const pick = bestCandidates[0];
+    weeksForEntry(pick.week, settings).forEach(w => {
+      providerBookingsByWeek[w][pick.day].push({ start: pick.start, end: pick.end });
+      session.members.forEach(m => memberBookingsByWeek[m.id][w][pick.day].push({ start: pick.start, end: pick.end }));
+    });
+    const weekKey = String(pick.week);
+    if (!reqDaysUsed[session.reqId]) reqDaysUsed[session.reqId] = {};
+    if (!reqDaysUsed[session.reqId][weekKey]) reqDaysUsed[session.reqId][weekKey] = [];
+    reqDaysUsed[session.reqId][weekKey].push(pick.day);
+    scheduled.push({ reqId: session.reqId, members: session.members, week: pick.week, day: pick.day, start: pick.start, end: pick.end, sessionIndex: session.sessionIndex, totalSessions: session.totalSessions });
+    pending.splice(bestIdx, 1);
+  }
+
+  const rescuedEntries = attemptGroupRescue(unscheduled, scheduled, individualsById, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
+  if (rescuedEntries.length) {
+    const rescuedSet = new Set(rescuedEntries);
+    unscheduled = unscheduled.filter(u => !rescuedSet.has(u));
+  }
+  const rescuedStudentCount = rescuedEntries.length;
+  const review = buildScheduleReview(scheduled, unscheduled, capacityWarnings, students);
+  const logRows = flattenScheduleLog(scheduled);
+  return { scheduled, unscheduled, capacityWarnings, rescuedStudentCount, review, logRows, sessionCount: scheduled.length };
+}
+
+function flattenScheduleLog(scheduled) {
+  return scheduled.slice().sort((a, b) => {
+    const aw = a.week === ALL_WEEKS_KEY ? 0 : a.week;
+    const bw = b.week === ALL_WEEKS_KEY ? 0 : b.week;
+    return aw - bw || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start;
+  }).flatMap(s => s.members.map(m => ({
+    studentId: m.id,
+    name: m.firstName + ' ' + m.lastName,
+    grade: m.grade,
+    groupId: m.groupId || s.groupId || '',
+    week: weekLabel(s.week),
+    day: s.day,
+    start: minutesToTimeStr(s.start),
+    end: minutesToTimeStr(s.end),
+    duration: s.end - s.start,
+    teacher: m.teacher || '',
+    locked: s.locked ? 'Yes' : '',
+  })));
+}
+
+function buildScheduleReview(scheduled, unscheduled, capacityWarnings, students) {
+  const scheduledByStudent = {};
+  scheduled.forEach(s => {
+    const minutes = s.end - s.start;
+    s.members.forEach(m => { scheduledByStudent[m.id] = (scheduledByStudent[m.id] || 0) + minutes; });
+  });
+  const reasonsByStudent = {};
+  unscheduled.forEach(u => u.session.members.forEach(m => {
+    if (!reasonsByStudent[m.id]) reasonsByStudent[m.id] = [];
+    if (reasonsByStudent[m.id].indexOf(u.reason) === -1) reasonsByStudent[m.id].push(u.reason);
+  }));
+  (capacityWarnings || []).forEach(w => w.members.forEach(m => {
+    if (!reasonsByStudent[m.id]) reasonsByStudent[m.id] = [];
+    if (reasonsByStudent[m.id].indexOf(w.message) === -1) reasonsByStudent[m.id].push(w.message);
+  }));
+  return students.map(s => {
+    const isQuarterly = s.frequencyType === 'Quarterly';
+    const required = isQuarterly ? (s.sessionsPerQuarter * s.quarterlySessionLength) : s.minutesPerWeek;
+    const scheduledMinutes = scheduledByStudent[s.id] || 0;
+    const diff = scheduledMinutes - required;
+    const pct = required > 0 ? Math.round((scheduledMinutes / required) * 100) : 0;
+    const status = required <= 0 ? 'N/A' : (scheduledMinutes >= required ? (scheduledMinutes > required ? 'Over' : 'Met') : 'Under');
+    return { id: s.id, name: s.firstName + ' ' + s.lastName, grade: s.grade, freq: s.frequencyType, required, scheduled: scheduledMinutes, diff, pct, status, notes: (reasonsByStudent[s.id] || []).join(' | ') };
+  }).sort((a, b) => a.pct - b.pct);
+}
+
+// ─── App state & persistence ─────────────────────────────────────────────────
+const STORAGE_KEY = 'caseloadSchedulerV1';
+
+let appState = {
+  settings: Object.assign({}, DEFAULT_SETTINGS),
+  students: [],
+  grades: [],
+  availability: [],
+  constraints: [],
+  scheduleLog: [],
+  scheduleReview: [],
+  lastRun: null,
+};
+
+function sampleData() {
+  return {
+    settings: Object.assign({}, DEFAULT_SETTINGS),
+    availability: [
+      { day: 'Mon-Fri', start: '8:00 AM', end: '11:00 AM', pattern: '', notes: '' },
+      { day: 'Mon, Wed', start: '12:30 PM', end: '3:00 PM', pattern: '', notes: '' },
+      { day: 'Tue, Thu, Fri', start: '12:30 PM', end: '2:30 PM', pattern: '', notes: '' },
+    ],
+    grades: [
+      { grade: '2', day: 'Mon-Fri', start: '11:30 AM', end: '12:15 PM', reason: 'Lunch' },
+      { grade: '2', day: 'Tue', start: '1:00 PM', end: '1:45 PM', reason: 'Specials' },
+      { grade: 'K', day: 'Mon, Wed', start: '9:00 AM', end: '9:30 AM', reason: 'Recess' },
+      { grade: '3', day: 'Mon-Fri', start: '11:00 AM', end: '11:45 AM', reason: 'Lunch' },
+    ],
+    constraints: [
+      { studentId: 'SMITHJ01', day: 'Tue', start: '10:00 AM', end: '10:30 AM', reason: 'OT' },
+      { studentId: 'JONESM02', day: 'Mon-Fri', start: '8:00 AM', end: '8:30 AM', reason: 'Resource room' },
+    ],
+    students: [
+      { id: 'SMITHJ01', firstName: 'John', lastName: 'Smith', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: 'Mrs. Lee - Rm 204', fixedDay: '', fixedStart: '' },
+      { id: 'JONESM02', firstName: 'Mary', lastName: 'Jones', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 90, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: 'Mr. Kim - Rm 210', fixedDay: '', fixedStart: '' },
+      { id: 'DOEA03', firstName: 'Alex', lastName: 'Doe', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Quarterly', minutesPerWeek: '', preferredSessionLength: '', sessionsPerQuarter: 8, quarterlySessionLength: 30, status: 'Active', teacher: 'Ms. Ray - Rm 101', fixedDay: '', fixedStart: '' },
+      { id: 'LEEB04', firstName: 'Bri', lastName: 'Lee', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 30, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: 'Ms. Ray - Rm 101', fixedDay: '', fixedStart: '' },
+      { id: 'PARKC05', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: 'Mr. Ade - Rm 305', fixedDay: '', fixedStart: '' },
+      { id: 'RIOSD06', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: 'Mr. Ade - Rm 305', fixedDay: '', fixedStart: '' },
+    ],
+    scheduleLog: [],
+    scheduleReview: [],
+    lastRun: null,
+  };
+}
+
+function saveState() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); } catch (e) { /* private mode */ }
+}
+
+function loadStateFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) appState = Object.assign(appState, JSON.parse(raw));
+  } catch (e) { /* ignore */ }
+}
+
+function setStatus(msg, type) {
+  const bar = document.getElementById('statusBar');
+  bar.textContent = msg;
+  bar.className = 'show' + (type ? ' ' + type : '');
+}
+
+// ─── UI rendering ────────────────────────────────────────────────────────────
+const TABS = [
+  { id: 'about', label: 'About' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'availability', label: 'My Availability' },
+  { id: 'grades', label: 'Grades' },
+  { id: 'constraints', label: 'Constraints' },
+  { id: 'students', label: 'Students' },
+  { id: 'log', label: 'Schedule Log' },
+  { id: 'review', label: 'Schedule Review' },
+];
+
+let activeTab = 'about';
+
+function initTabs() {
+  const nav = document.getElementById('tabNav');
+  if (!nav.dataset.inited) {
+    nav.dataset.inited = '1';
+    nav.innerHTML = TABS.map(t => '<button type="button" data-tab="' + t.id + '">' + t.label + '</button>').join('');
+    nav.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-tab]');
+      if (!btn) return;
+      activeTab = btn.dataset.tab;
+      updateTabActiveState();
+      render();
+    });
+  }
+  updateTabActiveState();
+}
+
+function updateTabActiveState() {
+  document.querySelectorAll('#tabNav button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === activeTab);
+  });
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+function renderEditableTable(key, columns, emptyRow) {
+  const rows = appState[key] || [];
+  let html = '<div class="card"><h2>' + esc(columns.title) + '</h2><p class="hint">' + esc(columns.hint || '') + '</p>';
+  html += '<table class="data" data-table="' + key + '"><thead><tr>' + columns.headers.map(h => '<th>' + h + '</th>').join('') + '<th></th></tr></thead><tbody>';
+  rows.forEach((row, ri) => {
+    html += '<tr>' + columns.fields.map(f => '<td><input value="' + esc(row[f] ?? '') + '" data-key="' + key + '" data-row="' + ri + '" data-field="' + f + '"></td>').join('');
+    html += '<td><button type="button" onclick="removeRow(\'' + key + '\',' + ri + ')">×</button></td></tr>';
+  });
+  html += '</tbody></table><button type="button" onclick="addRow(\'' + key + '\')">+ Add row</button></div>';
+  return html;
+}
+
+function renderSettings() {
+  const s = appState.settings;
+  const fields = [
+    ['slotIncrement', 'Slot Increment (min)'],
+    ['minSessionLength', 'Min Session Length (min)'],
+    ['maxSessionLength', 'Max Session Length (min)'],
+    ['weeksPerQuarter', 'Weeks Per Quarter'],
+    ['startingWeekPattern', 'Starting Week Pattern (A/B)'],
+    ['groupRescueExtraMinutes', 'Group Rescue Extra Minutes'],
+    ['maxGroupSize', 'Max Students Per Auto-Group'],
+  ];
+  let html = '<div class="card"><h2>Settings</h2><p class="hint">Same options as the Google Sheets Settings tab.</p><div class="settings-grid">';
+  fields.forEach(([k, label]) => {
+    html += '<label>' + label + '</label><input data-settings="' + k + '" value="' + esc(s[k]) + '">';
+  });
+  html += '<label>Prefer Consistent Weekly Pattern</label><select data-settings="preferConsistentPattern"><option value="true"' + (s.preferConsistentPattern ? ' selected' : '') + '>Yes</option><option value="false"' + (!s.preferConsistentPattern ? ' selected' : '') + '>No</option></select>';
+  html += '<label>Front-Load First Sessions (Weeks 1–2)</label><select data-settings="frontLoadFirstSessions"><option value="true"' + (s.frontLoadFirstSessions ? ' selected' : '') + '>Yes</option><option value="false"' + (!s.frontLoadFirstSessions ? ' selected' : '') + '>No</option></select>';
+  html += '</div></div>';
+  return html;
+}
+
+function renderLog() {
+  const rows = appState.scheduleLog || [];
+  let html = '<div class="card"><h2>Schedule Log</h2><p class="hint">Generated sessions. Set Locked to Yes before re-running to pin a row.</p>';
+  if (!rows.length) return html + '<p>No schedule yet — click <strong>Generate Schedule</strong>.</p></div>';
+  html += '<table class="data"><thead><tr><th>Student ID</th><th>Name</th><th>Grade</th><th>Group ID</th><th>Week</th><th>Day</th><th>Start</th><th>End</th><th>Min</th><th>Teacher</th><th>Locked</th></tr></thead><tbody>';
+  rows.forEach(r => {
+    const auto = String(r.groupId).indexOf('AUTO-GROUP-') === 0;
+    html += '<tr class="' + (auto ? 'auto-group' : '') + '"><td>' + esc(r.studentId) + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.grade) + '</td><td>' + esc(r.groupId) + '</td><td>' + esc(r.week) + '</td><td>' + esc(r.day) + '</td><td>' + esc(r.start) + '</td><td>' + esc(r.end) + '</td><td>' + esc(r.duration) + '</td><td>' + esc(r.teacher) + '</td><td>' + esc(r.locked) + '</td></tr>';
+  });
+  return html + '</tbody></table></div>';
+}
+
+function renderReview() {
+  const rows = appState.scheduleReview || [];
+  let html = '<div class="card"><h2>Schedule Review</h2>';
+  if (!rows.length) return html + '<p>Run Generate Schedule to see compliance.</p></div>';
+  const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  html += '<p class="summary">' + met + ' of ' + rows.length + ' students meeting required minutes</p>';
+  html += '<table class="data"><thead><tr><th>ID</th><th>Name</th><th>Grade</th><th>Freq</th><th>Required</th><th>Scheduled</th><th>Diff</th><th>%</th><th>Status</th><th>Notes</th></tr></thead><tbody>';
+  rows.forEach(r => {
+    html += '<tr class="' + (r.status === 'Under' ? 'under' : (r.status === 'Met' || r.status === 'Over' ? 'met' : '')) + '"><td>' + esc(r.id) + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.grade) + '</td><td>' + esc(r.freq) + '</td><td>' + esc(r.required) + '</td><td>' + esc(r.scheduled) + '</td><td>' + esc(r.diff) + '</td><td>' + esc(r.pct) + '%</td><td>' + esc(r.status) + '</td><td>' + esc(r.notes) + '</td></tr>';
+  });
+  return html + '</tbody></table></div>';
+}
+
+function renderAbout() {
+  return '<div class="card"><h2>About this file</h2><p class="hint">One HTML file — open in Chrome, Firefox, Safari, or Edge. No Google account, no install, no server.</p>' +
+    '<ul><li><strong>Load sample caseload</strong> fills demo data from the README.</li>' +
+    '<li>Edit tabs, then <strong>Generate Schedule</strong>.</li>' +
+    '<li>Data persists in <code>localStorage</code> in this browser.</li>' +
+    '<li>Uses the same constraint-based scheduling algorithm as the Apps Script version (most-constrained-first, group rescue, front-loading, A/B patterns).</li></ul>' +
+    (appState.lastRun ? '<p>Last run: ' + esc(appState.lastRun) + '</p>' : '') +
+    '</div>';
+}
+
+function render() {
+  const main = document.getElementById('main');
+  let html = '';
+  if (activeTab === 'about') html = renderAbout();
+  else if (activeTab === 'settings') html = renderSettings();
+  else if (activeTab === 'availability') html = renderEditableTable('availability', { title: 'My Availability', hint: 'Day accepts Mon, Mon-Fri, Mon, Wed, Fri, or All.', headers: ['Day', 'Start', 'End', 'Week Pattern (A/B)', 'Notes'], fields: ['day', 'start', 'end', 'pattern', 'notes'] });
+  else if (activeTab === 'grades') html = renderEditableTable('grades', { title: 'Grades', hint: 'Grade-wide blackouts (lunch, specials).', headers: ['Grade', 'Day', 'Start', 'End', 'Reason'], fields: ['grade', 'day', 'start', 'end', 'reason'] });
+  else if (activeTab === 'constraints') html = renderEditableTable('constraints', { title: 'Constraints', hint: 'Per-student blackouts.', headers: ['Student ID', 'Day', 'Start', 'End', 'Reason'], fields: ['studentId', 'day', 'start', 'end', 'reason'] });
+  else if (activeTab === 'students') html = renderEditableTable('students', { title: 'Students', hint: 'Active students only are scheduled.', headers: ['ID', 'First', 'Last', 'Grade', 'Service', 'Group ID', 'Freq', 'Min/Wk', 'Pref Len', 'Sess/Qtr', 'Qtr Len', 'Status', 'Teacher', 'Fixed Day', 'Fixed Start'], fields: ['id', 'firstName', 'lastName', 'grade', 'serviceType', 'groupId', 'frequencyType', 'minutesPerWeek', 'preferredSessionLength', 'sessionsPerQuarter', 'quarterlySessionLength', 'status', 'teacher', 'fixedDay', 'fixedStart'] });
+  else if (activeTab === 'log') html = renderLog();
+  else if (activeTab === 'review') html = renderReview();
+  main.innerHTML = html;
+  bindInputs();
+}
+
+function bindInputs() {
+  document.querySelectorAll('input[data-key]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const key = inp.dataset.key;
+      const row = parseInt(inp.dataset.row, 10);
+      const field = inp.dataset.field;
+      if (!appState[key][row]) appState[key][row] = {};
+      appState[key][row][field] = inp.value;
+      saveState();
+    });
+  });
+  document.querySelectorAll('[data-settings]').forEach(el => {
+    el.addEventListener('change', () => {
+      const k = el.dataset.settings;
+      let v = el.value;
+      if (k === 'preferConsistentPattern' || k === 'frontLoadFirstSessions') v = v === 'true';
+      else if (k !== 'startingWeekPattern') v = Number(v) || v;
+      appState.settings[k] = v;
+      saveState();
+    });
+  });
+}
+
+function addRow(key) {
+  const templates = {
+    availability: { day: 'Mon-Fri', start: '8:00 AM', end: '3:00 PM', pattern: '', notes: '' },
+    grades: { grade: '', day: 'Mon-Fri', start: '', end: '', reason: '' },
+    constraints: { studentId: '', day: 'Mon', start: '', end: '', reason: '' },
+    students: { id: '', firstName: '', lastName: '', grade: '', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: '', preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' },
+  };
+  if (!appState[key]) appState[key] = [];
+  appState[key].push(Object.assign({}, templates[key]));
+  saveState();
+  render();
+}
+
+function removeRow(key, idx) {
+  appState[key].splice(idx, 1);
+  saveState();
+  render();
+}
+
+function loadSampleData() {
+  appState = sampleData();
+  saveState();
+  setStatus('Sample caseload loaded.', 'ok');
+  render();
+}
+
+function validateDataUI() {
+  const issues = [];
+  const settings = buildSettings(appState.settings);
+  const students = loadStudents(appState.students);
+  if (!appState.availability.length) issues.push('MyAvailability is empty.');
+  students.forEach(s => {
+    if (s.frequencyType === 'Weekly' && !s.minutesPerWeek) issues.push(s.id + ': Weekly student needs Minutes/Week.');
+    if (s.frequencyType === 'Quarterly' && (!s.sessionsPerQuarter || !s.quarterlySessionLength)) issues.push(s.id + ': Quarterly student needs sessions and length.');
+    if (s.serviceType === 'Group' && !s.groupId) issues.push(s.id + ': Group student needs Group ID.');
+  });
+  if (!issues.length) setStatus('Validation passed — ready to generate.', 'ok');
+  else setStatus(issues.length + ' issue(s): ' + issues.join(' · '), 'error');
+}
+
+function generateScheduleUI() {
+  syncInputsFromDOM();
+  const result = runSchedulingEngine(appState);
+  if (result.error) { setStatus(result.error, 'error'); return; }
+  appState.scheduleLog = result.logRows;
+  appState.scheduleReview = result.review;
+  appState.lastRun = new Date().toLocaleString();
+  saveState();
+  const unplaced = result.unscheduled.length;
+  setStatus('Scheduled ' + result.sessionCount + ' session(s). ' + unplaced + ' unplaced. ' + result.rescuedStudentCount + ' auto-grouped.', unplaced ? 'error' : 'ok');
+  activeTab = 'review';
+  updateTabActiveState();
+  render();
+}
+
+function syncInputsFromDOM() {
+  document.querySelectorAll('input[data-key]').forEach(inp => {
+    const key = inp.dataset.key;
+    const row = parseInt(inp.dataset.row, 10);
+    const field = inp.dataset.field;
+    if (!appState[key][row]) appState[key][row] = {};
+    appState[key][row][field] = inp.value;
+  });
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+loadStateFromStorage();
+if (!appState.students.length) appState = sampleData();
+initTabs();
+render();
+</script>
+</body>
+</html>
