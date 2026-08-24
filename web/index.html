@@ -154,7 +154,7 @@
     @media (max-width: 980px) {
       .setup-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 800px) {
+    @media (max-width: 720px) {
       body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; grid-template-areas: "top" "mob" "main"; }
       aside { display: none; }
       .mob-nav {
@@ -767,7 +767,7 @@ function openStudentForm(idx) {
       <h3>Unavailable times</h3>
       <p class="meta">OT, resource room, or anything besides this student’s grade lunch/specials.</p>
       <div id="block-editor">${isNew ? '<p class="meta">Save the student first, then add blocks here.</p>' : blockEditorHtml(s.id)}</div>
-      ${isNew ? '' : `<div class="row" style="margin-top:8px"><button type="button" onclick="addBlockFor('${esc(s.id)}')">Add unavailable time</button></div>`}
+      ${isNew ? '' : '<div class="row" style="margin-top:8px"><button type="button" id="f-add-block">Add unavailable time</button></div>'}
     </div>
     <div class="row" style="margin-top:12px">
       <button class="primary" id="f-save">Save student</button>
@@ -802,7 +802,10 @@ function openStudentForm(idx) {
     else custom.value = wrap.querySelector('#f-gid-pick').value;
   };
   sync();
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
   wrap.querySelector('#f-cancel').onclick = () => wrap.remove();
+  const addBtn = wrap.querySelector('#f-add-block');
+  if (addBtn) addBtn.onclick = () => addBlockFor(s.id);
   wrap.querySelector('#f-save').onclick = () => {
     const gradePick = wrap.querySelector('#f-grade').value;
     const groupPick = wrap.querySelector('#f-gid-pick').value;
