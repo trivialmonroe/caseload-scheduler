@@ -754,17 +754,22 @@ function importXlsxBuffer(buf, filename) {
 
 async function importMultipleFiles(files) {
   const imports = {};
+  let jsonPayload = null;
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     if (/\.xlsx?$/i.test(f.name)) {
       const buf = await f.arrayBuffer();
-      Object.assign(imports, parseXlsxToImports(buf));
+      const xlsxImports = parseXlsxToImports(buf);
+      Object.keys(xlsxImports).forEach(kind => {
+        if (!imports[kind]) imports[kind] = [];
+        imports[kind] = imports[kind].concat(xlsxImports[kind]);
+      });
       continue;
     }
     const text = await f.text();
     if (/\.json$/i.test(f.name) || text.trim().startsWith('{')) {
-      importJsonText(text);
-      return;
+      jsonPayload = text;
+      continue;
     }
     const rows = csvToObjects(text);
     if (!rows.length) continue;
@@ -773,11 +778,16 @@ async function importMultipleFiles(files) {
     if (!imports[kind]) imports[kind] = [];
     imports[kind] = imports[kind].concat(rows);
   }
-  if (!Object.keys(imports).length) {
-    setStatus('No recognized CSV/Excel tables in selection.', 'bad');
+  if (Object.keys(imports).length) {
+    importWorkbookFromSheets(imports, files.length + ' files');
+    if (jsonPayload) setStatus('Imported tables; skipped workspace JSON when combined with CSV/Excel.', 'ok');
     return;
   }
-  importWorkbookFromSheets(imports, files.length + ' files');
+  if (jsonPayload) {
+    importJsonText(jsonPayload);
+    return;
+  }
+  setStatus('No recognized CSV/Excel tables in selection.', 'bad');
 }
 
 function importText(name, text) {

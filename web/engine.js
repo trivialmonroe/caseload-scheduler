@@ -217,8 +217,10 @@ function loadLockedSessions(logRows) {
     const studentId = String(r.studentId).trim();
     const groupId = r.groupId ? String(r.groupId).trim() : '';
     const reqId = groupId || studentId;
-    const weekLabelRaw = String(r.week).trim();
-    const week = weekLabelRaw === 'Every Week' ? ALL_WEEKS_KEY : (Number(weekLabelRaw.replace(/[^0-9]/g, '')) || 1);
+    const weekLabelRaw = String(r.week || '').trim();
+    const week = (weekLabelRaw === 'Every Week' || !weekLabelRaw)
+      ? ALL_WEEKS_KEY
+      : (Number(weekLabelRaw.replace(/[^0-9]/g, '')) || 1);
     let start, end;
     try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
     const key = reqId + '|' + week + '|' + r.day + '|' + start + '|' + end;
@@ -244,6 +246,13 @@ function weeksForEntry(weekValue, settings) {
 
 function weekLabel(week) {
   return week === ALL_WEEKS_KEY ? 'Every Week' : 'Week ' + week;
+}
+
+/** Blank / missing week means weekly (every week) — matches scheduledEntriesFromLog. */
+function normalizeWeekLabel(raw) {
+  const w = String(raw || '').trim();
+  if (!w || w.toLowerCase() === 'every week') return 'Every Week';
+  return w;
 }
 
 function gradeSortValue(grade) {
@@ -716,6 +725,11 @@ function canAddStudentToSession(input, logRow, studentId) {
   if (mates.some(r => String(r.studentId) === String(studentId))) {
     return { ok: false, error: 'Already in this session.' };
   }
+  const hostNoGroup = mates.some(m => {
+    const s = students.find(x => String(x.id) === String(m.studentId));
+    return s && s.noGroup;
+  });
+  if (hostNoGroup) return { ok: false, error: 'Cannot add members to a No Group student\'s session.' };
   if (mates.length >= settings.maxGroupSize) {
     return { ok: false, error: 'Session is at max group size (' + settings.maxGroupSize + ').' };
   }
@@ -894,7 +908,7 @@ function findAlternativeSlots(input, logRow) {
     const rowStudentId = String(r.studentId).trim();
     if (movingKeys[sessionKeyFromLogRow(r) + '|' + rowStudentId]) return;
     const rWeekText = String(r.week || '').trim();
-    const rIsAll = rWeekText === 'Every Week';
+    const rIsAll = rWeekText === 'Every Week' || rWeekText === '';
     let start, end;
     try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
     const weeksHit = rIsAll ? settings.weeksList : [Number(String(rWeekText).replace(/[^0-9]/g, ''))];
@@ -1163,7 +1177,7 @@ function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
     grade: String(r.grade || '').trim(),
     groupId: r.groupId ? String(r.groupId).trim() : '',
     name: r.name,
-    weekLabel: String(r.week || '').trim(),
+    weekLabel: normalizeWeekLabel(r.week),
     day: r.day,
     start: timeStrToMinutes(r.start),
     end: timeStrToMinutes(r.end),
@@ -1276,10 +1290,20 @@ function normalizeHeaderKey(h) {
 }
 
 function csvRowGet(o, ...aliases) {
+  const keys = Object.keys(o || {});
   for (let i = 0; i < aliases.length; i++) {
     const want = normalizeHeaderKey(aliases[i]);
-    const k = Object.keys(o || {}).find(x => normalizeHeaderKey(x) === want || normalizeHeaderKey(x).includes(want));
-    if (k != null && o[k] !== undefined && o[k] !== '') return o[k];
+    const k = keys.find(x => normalizeHeaderKey(x) === want);
+    if (k != null && o[k] !== undefined && String(o[k]).trim() !== '') return o[k];
+  }
+  for (let i = 0; i < aliases.length; i++) {
+    const want = normalizeHeaderKey(aliases[i]);
+    if (want.length < 6) continue;
+    const k = keys.find(x => {
+      const nx = normalizeHeaderKey(x);
+      return nx.startsWith(want) || nx.endsWith(want);
+    });
+    if (k != null && o[k] !== undefined && String(o[k]).trim() !== '') return o[k];
   }
   return '';
 }
@@ -1328,7 +1352,8 @@ function detectCsvKind(headers, filename) {
   if (fn === 'grades') return 'grades';
   if (fn === 'constraints' || fn === 'blocks') return 'constraints';
   if (fn === 'settings') return 'settings';
-  if (fn.includes('schedule') || fn === 'log') return 'schedule';
+  if ((fn.includes('schedulelog') || fn === 'log') && !fn.includes('review')) return 'schedule';
+  if (fn === 'schedule' && !fn.includes('review')) return 'schedule';
 
   const keys = (headers || []).map(normalizeHeaderKey);
   const has = (needle) => keys.some(k => k === needle || k.includes(needle));
@@ -1367,7 +1392,7 @@ function finalizeImportedStudent(s) {
 function normalizeImportedStudent(o) {
   const get = (...keys) => csvRowGet(o, ...keys);
   return finalizeImportedStudent({
-    id: get('id', 'studentId', 'Student ID'),
+    id: get('studentId', 'Student ID'),
     firstName: get('firstName', 'First Name', 'first'),
     lastName: get('lastName', 'Last Name', 'last'),
     grade: get('grade', 'Grade'),
@@ -1425,7 +1450,7 @@ function normalizeImportedScheduleRow(o) {
     name: csvRowGet(o, 'name', 'Name'),
     grade: csvRowGet(o, 'grade', 'Grade'),
     groupId: csvRowGet(o, 'groupId', 'Group ID'),
-    week: csvRowGet(o, 'week', 'Week'),
+    week: normalizeWeekLabel(csvRowGet(o, 'week', 'Week')),
     day: csvRowGet(o, 'day', 'Day'),
     start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
     end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
@@ -1565,7 +1590,8 @@ if (typeof module !== 'undefined' && module.exports) {
     computeOpenSlots, findAlternativeSlots, findSwapCandidates, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     normalizeHeaderKey, csvRowGet, sheetNameToKind, importTableRows, applyWorkbookImports,
-    mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow,
+    mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow, normalizeWeekLabel,
+    loadLockedSessions,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
     sessionMateRows, sessionKeyFromLogRow, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
