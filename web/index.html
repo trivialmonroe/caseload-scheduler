@@ -176,8 +176,19 @@
     input[type="time"] { min-height: 38px; }
     .sess { cursor: pointer; }
     .sess:hover { filter: brightness(1.08); }
+    .coverage-banner {
+      border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412;
+      padding: 10px 12px; border-radius: 10px; margin: 0 0 14px; font-size: 13px;
+    }
+    .coverage-banner.ok { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+    .print-panel .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 12px 0; }
+    .print-panel label.chk { font-weight: 500; display: flex; gap: 8px; align-items: center; margin: 0; }
+    .print-panel input[type="checkbox"] { width: auto; }
+    .member-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+    .member-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+    .sess .sess-sub { display: block; opacity: .9; font-size: 10px; }
     @media print {
-      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover { display: none !important; }
+      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .print-panel { display: none !important; }
       body { display: block; background: #fff; }
       main { padding: 0; }
       .week-cals { gap: 24px; }
@@ -186,7 +197,14 @@
       body.print-week .lede,
       body.print-week .stat-grid,
       body.print-week .row { display: none !important; }
+      body.print-week .print-only { display: block !important; }
+      body.print-hide-times .sess-time { display: none !important; }
+      body.print-hide-teachers .sess-teacher { display: none !important; }
+      body.print-hide-groups .sess-group { display: none !important; }
+      body.print-compact .cal-grid > div { min-height: 22px; padding: 1px; }
+      body.print-compact .sess { font-size: 10px; padding: 2px 4px; }
     }
+    .print-only { display: none; }
     @media (max-width: 980px) {
       .setup-grid { grid-template-columns: 1fr; }
     }
@@ -246,6 +264,16 @@ let studentQuery = '';
 let csvImportMode = 'replace';
 let caseloadDirty = false;
 let undoSnapshot = null;
+let showPrintPanel = false;
+let printOpts = {
+  teachers: true,
+  groups: true,
+  times: true,
+  grades: true,
+  coverage: false,
+  compact: false,
+  allWeeks: false,
+};
 
 function blankWorkspace() {
   return {
@@ -282,8 +310,8 @@ function sampleWorkspace() {
     { id: 'JONESM02', firstName: 'Mary', lastName: 'Jones', grade: '2', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 90, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Kim — Rm 210', fixedDay: '', fixedStart: '' },
     { id: 'DOEA03', firstName: 'Alex', lastName: 'Doe', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Quarterly', minutesPerWeek: '', preferredSessionLength: '', sessionsPerQuarter: 8, quarterlySessionLength: 30, notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
     { id: 'LEEB04', firstName: 'Bri', lastName: 'Lee', grade: 'K', serviceType: 'Individual', groupId: '', frequencyType: 'Weekly', minutesPerWeek: 30, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Ms. Ray — Rm 101', fixedDay: '', fixedStart: '' },
-    { id: 'PARKC05', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
-    { id: 'RIOSD06', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+    { id: 'PARKC05', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1', groupIds: ['G1'], frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
+    { id: 'RIOSD06', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1', groupIds: ['G1'], frequencyType: 'Weekly', minutesPerWeek: 45, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: 'Mr. Ade — Rm 305', fixedDay: '', fixedStart: '' },
   ];
   return w;
 }
@@ -353,7 +381,12 @@ function knownGrades() {
   return uniqueValues(state.grades.map(g => g.grade).concat(state.students.map(s => s.grade)));
 }
 function knownGroups() {
-  return uniqueValues(state.students.map(s => s.groupId));
+  const all = [];
+  state.students.forEach(s => {
+    const ids = (s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : []);
+    ids.forEach(g => all.push(g));
+  });
+  return uniqueValues(all);
 }
 function studentLabel(id) {
   const s = state.students.find(x => x.id === id);
@@ -556,6 +589,56 @@ function reviewRows() {
   return [];
 }
 
+function refreshLiveReview(note) {
+  if (!(state.scheduleLog || []).length) return;
+  const review = reviewFromScheduleLog(engineInput());
+  const under = review.filter(r => r.status === 'Under').length;
+  const over = review.filter(r => r.status === 'Over').length;
+  const met = review.filter(r => r.status === 'Met' || r.status === 'Over').length;
+  if (!state.lastRun) state.lastRun = { at: new Date().toISOString() };
+  state.lastRun.review = review;
+  state.lastRun.unplaced = under; // surface under-covered as attention metric after edits
+  persist();
+  let msg = note || 'Schedule updated.';
+  if (under || over) {
+    msg += ' Coverage: ' + met + '/' + review.length + ' meeting minutes';
+    if (under) msg += ' · ' + under + ' under';
+    if (over) msg += ' · ' + over + ' over';
+    setStatus(msg, under ? 'bad' : 'ok');
+  } else {
+    setStatus(msg + ' All students meeting minutes.', 'ok');
+  }
+}
+
+function coverageBannerHtml() {
+  const rev = reviewRows();
+  if (!rev.length || !(state.scheduleLog || []).length) return '';
+  const under = rev.filter(r => r.status === 'Under');
+  const over = rev.filter(r => r.status === 'Over');
+  if (!under.length && !over.length) {
+    return '<div class="coverage-banner ok no-print">Live coverage: every active student is meeting required minutes.</div>';
+  }
+  const bits = [];
+  under.slice(0, 4).forEach(r => bits.push(esc(r.name) + ' under (' + r.scheduled + '/' + r.required + ')'));
+  over.slice(0, 4).forEach(r => bits.push(esc(r.name) + ' over (' + r.scheduled + '/' + r.required + ')'));
+  const more = (under.length + over.length) > bits.length ? ' …' : '';
+  return '<div class="coverage-banner no-print"><b>Coverage needs attention.</b> ' + bits.join(' · ') + more +
+    ' <button type="button" onclick="scheduleTab=\'coverage\';render()">Open coverage</button></div>';
+}
+
+function formatSessionCell(entry, opts) {
+  const o = opts || printOpts;
+  const names = entry.names.join(' + ');
+  let sub = [];
+  if (o.times !== false) sub.push('<span class="sess-time">' + esc(minutesToTimeStr(entry.start) + '–' + minutesToTimeStr(entry.end)) + '</span>');
+  if (o.groups && entry.groupId) sub.push('<span class="sess-group">' + esc(entry.groupId) + '</span>');
+  if (o.teachers && entry.teachers && entry.teachers.length) {
+    const t = entry.teachers.filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    if (t.length) sub.push('<span class="sess-teacher">' + esc(t.join(', ')) + '</span>');
+  }
+  return esc(names) + (sub.length ? '<span class="sess-sub">' + sub.join(' · ') + '</span>' : '');
+}
+
 function renderSchedule() {
   const tabs = [['week','Week'],['coverage','Coverage'],['sessions','Sessions'],['open','Open slots']];
   let html = `<h1>Schedule</h1>
@@ -572,21 +655,49 @@ function sessionPopoverHtml() {
   if (altFor == null || !state.scheduleLog[altFor]) return '';
   const row = state.scheduleLog[altFor];
   const locked = String(row.locked).toLowerCase() === 'yes';
+  const mates = sessionMateRows(state.scheduleLog, row);
   const found = findAlternativeSlots(engineInput(), row);
+  const review = reviewRows();
+  const memberIds = mates.map(r => String(r.studentId));
+  const addOptions = state.students.filter(s => {
+    if (String(s.status || 'Active').toLowerCase() !== 'active') return false;
+    if (memberIds.indexOf(String(s.id)) >= 0) return false;
+    if (s.noGroup) return false;
+    return true;
+  });
   let html = `<div class="popover no-print" id="session-popover">
-    <h3>${esc(row.name)}</h3>
-    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}${row.teacher ? '<br>' + esc(row.teacher) : ''}</p>
+    <h3>Session</h3>
+    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}</p>
+    <div class="field"><label>Members</label><div class="member-list">`;
+  mates.forEach(m => {
+    const cov = review.find(r => r.id === m.studentId);
+    const covTxt = cov ? (cov.status + ' · ' + cov.scheduled + '/' + cov.required + ' min') : '';
+    html += `<div class="member-row">
+      <span>${esc(m.name)} <span class="meta">Gr ${esc(m.grade)}</span></span>
+      ${covTxt ? `<span class="pill ${cov.status === 'Under' ? 'bad' : (cov.status === 'Over' ? 'warn' : 'ok')}">${esc(covTxt)}</span>` : ''}
+      ${mates.length > 1 ? `<button type="button" class="ghost danger" onclick="removeFromSession('${esc(m.studentId)}')">Remove</button>` : ''}
+    </div>`;
+  });
+  html += `</div></div>
+    <div class="field"><label>Add student to this session</label>
+      <div class="row" style="margin:0">
+        <select id="add-member" style="max-width:240px"><option value="">Choose…</option>${addOptions.map(s =>
+          `<option value="${esc(s.id)}">${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select>
+        <button type="button" onclick="addToSession()">Add</button>
+      </div>
+      <p class="meta">Valid only if they are free, under max group size, and not marked No Group. You will get a warning if minutes go over or under.</p>
+    </div>
     <div class="card-actions">
       <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
       <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
     </div>
     <div class="field">
-      <label>Move to another time</label>
+      <label>Move group to another valid time</label>
       <div class="chip-row">`;
   if (found.error) html += `<span class="meta">${esc(found.error)}</span>`;
   else {
     const list = found.candidates || [];
-    if (!list.length) html += '<span class="meta">No other slots fit current locks and blackouts.</span>';
+    if (!list.length) html += '<span class="meta">No other slots fit current locks and blackouts for this whole group.</span>';
     list.forEach((c, n) => {
       html += `<button type="button" class="chip" onclick="applyAlt(${n})">${esc(c.day)} ${esc(minutesToTimeStr(c.start))}–${esc(minutesToTimeStr(c.end))}${c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL' ? ' W' + c.week : ''}</button>`;
     });
@@ -595,18 +706,120 @@ function sessionPopoverHtml() {
   return html;
 }
 
+function addToSession() {
+  const sel = document.getElementById('add-member');
+  const studentId = sel && sel.value;
+  if (!studentId || altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const check = canAddStudentToSession(engineInput(), row, studentId);
+  if (!check.ok) { setStatus(check.error, 'bad'); return; }
+  if (check.warning && !confirm(check.warning + '\n\nAdd them anyway?')) return;
+  const s = state.students.find(x => x.id === studentId);
+  let gid = String(row.groupId || '').trim();
+  if (!gid) {
+    gid = 'EDIT-GROUP-' + Date.now().toString(36).toUpperCase();
+    sessionMateRows(state.scheduleLog, row).forEach(r => { r.groupId = gid; });
+  }
+  state.scheduleLog.push({
+    studentId: s.id,
+    name: s.firstName + ' ' + s.lastName,
+    grade: s.grade,
+    groupId: gid,
+    week: row.week,
+    day: row.day,
+    start: row.start,
+    end: row.end,
+    duration: row.duration,
+    teacher: s.teacher || '',
+    locked: row.locked || ''
+  });
+  // Keep altFor on the original row index (still valid)
+  refreshLiveReview('Added ' + s.firstName + ' to the session.');
+  render();
+}
+
+function removeFromSession(studentId) {
+  if (altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const mates = sessionMateRows(state.scheduleLog, row);
+  if (mates.length <= 1) { setStatus('Cannot remove the only member.', 'bad'); return; }
+  const idx = state.scheduleLog.findIndex(r =>
+    String(r.studentId) === String(studentId)
+    && String(r.week) === String(row.week)
+    && String(r.day) === String(row.day)
+    && String(r.start) === String(row.start)
+    && String(r.groupId || '') === String(row.groupId || '')
+  );
+  if (idx < 0) return;
+  const name = state.scheduleLog[idx].name;
+  state.scheduleLog.splice(idx, 1);
+  if (altFor === idx) {
+    const next = state.scheduleLog.findIndex(r =>
+      String(r.week) === String(row.week)
+      && String(r.day) === String(row.day)
+      && String(r.start) === String(row.start)
+      && String(r.groupId || '') === String(row.groupId || '')
+    );
+    altFor = next >= 0 ? next : null;
+  } else if (altFor > idx) {
+    altFor -= 1;
+  }
+  refreshLiveReview('Removed ' + name + ' from the session.');
+  render();
+}
+
 function closeSessionPopover() {
   altFor = null;
   render();
 }
 
-function printWeek() {
+function printOptionsHtml() {
+  if (!showPrintPanel) return '';
+  const o = printOpts;
+  const chk = (key, label) =>
+    `<label class="chk"><input type="checkbox" ${o[key] ? 'checked' : ''} onchange="printOpts.${key}=this.checked"> ${label}</label>`;
+  return `<div class="card print-panel no-print">
+    <h3>Print options</h3>
+    <p class="meta">Choose what appears on the printed week calendars, then print.</p>
+    <div class="check-grid">
+      ${chk('times', 'Session times')}
+      ${chk('teachers', 'Teachers / rooms')}
+      ${chk('groups', 'Group IDs')}
+      ${chk('grades', 'Grade color legend')}
+      ${chk('coverage', 'Coverage summary')}
+      ${chk('compact', 'Compact rows')}
+      ${chk('allWeeks', 'All quarter weeks (not just 2-week snapshot)')}
+    </div>
+    <div class="card-actions">
+      <button type="button" class="primary" onclick="runPrint()">Print</button>
+      <button type="button" class="ghost" onclick="showPrintPanel=false;render()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function openPrintOptions() {
   scheduleTab = 'week';
   altFor = null;
+  showPrintPanel = true;
+  render();
+}
+
+function runPrint() {
+  scheduleTab = 'week';
+  altFor = null;
+  showPrintPanel = false;
+  if (printOpts.allWeeks) showAllWeeks = true;
+  else showAllWeeks = false;
   document.body.classList.add('print-week');
+  document.body.classList.toggle('print-hide-times', !printOpts.times);
+  document.body.classList.toggle('print-hide-teachers', !printOpts.teachers);
+  document.body.classList.toggle('print-hide-groups', !printOpts.groups);
+  document.body.classList.toggle('print-compact', !!printOpts.compact);
   render();
   requestAnimationFrame(() => window.print());
 }
+
+function printWeek() { openPrintOptions(); }
 
 function renderWeekBody() {
   const log = state.scheduleLog || [];
@@ -620,21 +833,28 @@ function renderWeekBody() {
       </div>`;
   }
   const cal = buildCalendarModel(log, state.settings, showAllWeeks);
-  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered. Click a block to lock or move it.</p>
+  let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered. Click a block to lock, move, or edit the group.</p>
+    ${coverageBannerHtml()}
     <div class="stat-grid no-print">
       <div class="stat"><b>${log.length}</b><span>Session rows</span></div>
       <div class="stat"><b>${met}</b><span>Students meeting minutes</span></div>
-      <div class="stat"><b>${(state.lastRun && state.lastRun.unplaced) || 0}</b><span>Unplaced</span></div>
+      <div class="stat"><b>${rev.filter(r => r.status === 'Under').length}</b><span>Under minutes</span></div>
       <div class="stat"><b>${(state.lastRun && state.lastRun.rescued) || 0}</b><span>Auto-grouped</span></div>
     </div>
     <div class="row no-print">
       <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
       <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
-      <button onclick="printWeek()">Print</button>
+      <button onclick="openPrintOptions()">Print…</button>
       ${undoSnapshot ? `<button type="button" onclick="undoLastGenerate()">Undo generate</button>` : ''}
       <button onclick="exportCsv('schedule')">Export schedule CSV</button>
     </div>
-    <div class="row no-print">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+    ${printOptionsHtml()}
+    <div class="row ${printOpts.grades ? '' : 'no-print'}">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+  if (printOpts.coverage) {
+    html += `<div class="print-only card"><h3>Coverage</h3><table><thead><tr><th>Student</th><th>Required</th><th>Placed</th><th>Status</th></tr></thead><tbody>` +
+      rev.map(r => `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${esc(r.status)}</td></tr>`).join('') +
+      `</tbody></table></div>`;
+  }
   html += sessionPopoverHtml();
   html += '<div class="week-cals">';
   cal.weekPairs.forEach(pair => {
@@ -660,7 +880,7 @@ function renderWeekGrid(cal, week) {
     const r0 = Math.max(0, Math.round((e.start - start) / inc));
     const r1 = Math.min(rows, Math.max(r0 + 1, Math.round((e.end - start) / inc)));
     const color = cal.gradeColors[e.grade] || { bg: '#444', text: '#fff' };
-    const text = e.names.join(' + ') + '\\n' + minutesToTimeStr(e.start) + '–' + minutesToTimeStr(e.end);
+    const text = formatSessionCell(e, printOpts);
     if (cells[e.day]) cells[e.day][r0] = { span: Math.max(1, r1 - r0), text, color, day: e.day, start: e.start, studentId: (e.studentIds && e.studentIds[0]) || '' };
     for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
   });
@@ -672,7 +892,7 @@ function renderWeekGrid(cal, week) {
       const c = cells[d][r];
       if (c === 'skip') return;
       if (!c) { html += '<div></div>'; return; }
-      html += `<div style="grid-row: span ${c.span}"><div class="sess${selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId) ? ' on' : ''}" title="Open session tools" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${esc(c.text)}</div></div>`;
+      html += `<div style="grid-row: span ${c.span}"><div class="sess${selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId) ? ' on' : ''}" title="Lock, move, or edit group" onclick="openCalendarSession('${esc(c.day)}',${c.start},'${esc(c.studentId)}')" style="background:${c.color.bg};color:${c.color.text}">${c.text}</div></div>`;
     });
   }
   return html + '</div>';
@@ -704,8 +924,9 @@ function toggleLock(i) {
   const row = state.scheduleLog[i];
   if (!row) return;
   const on = String(row.locked).toLowerCase() === 'yes';
-  row.locked = on ? '' : 'Yes';
-  persist();
+  const mates = sessionMateRows(state.scheduleLog, row);
+  mates.forEach(r => { r.locked = on ? '' : 'Yes'; });
+  refreshLiveReview(on ? 'Unlocked session.' : 'Locked session.');
   render();
 }
 
@@ -772,8 +993,7 @@ function applyAlt(n) {
     r.end = minutesToTimeStr(c.start + dur);
     if (c.week && c.week !== ALL_WEEKS_KEY && c.week !== 'ALL') r.week = 'Week ' + c.week;
   });
-  persist();
-  setStatus('Moved session.', 'ok');
+  refreshLiveReview('Moved session (whole group).');
   altFor = null;
   render();
 }
@@ -831,7 +1051,7 @@ function studentCardsHtml(list) {
       : '<span class="meta">No extra blocks — grade lunch/specials still apply</span>';
     return `<div class="card student" onclick="openStudentForm(${idx})">
       <h3>${esc(s.lastName)}, ${esc(s.firstName)} <span class="pill">${esc(s.status || 'Active')}</span> ${covPill}</h3>
-      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${s.groupId ? ' · ' + esc(s.groupId) : ''}${s.noGroup ? ' · <span class="pill warn">No Group</span>' : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
+      <div class="meta">Grade ${esc(s.grade)} · ${esc(s.serviceType)}${((s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : [])).map(g => ' · ' + esc(g)).join('')}${s.noGroup ? ' · <span class="pill warn">No Group</span>' : ''} · ${esc(s.frequencyType)} · ${esc(studentNeed(s))}${s.teacher ? '<br>' + esc(s.teacher) : ''}</div>
       <div class="meta" style="margin-top:8px">${blockBits}</div>
       <div class="row" style="margin:10px 0 0">
         <button onclick="event.stopPropagation();openStudentForm(${idx})">Edit</button>
@@ -880,7 +1100,7 @@ function groupOptions(selected) {
 function openStudentForm(idx) {
   const isNew = idx == null;
   const s = isNew
-    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', noGroup: false, frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
+    ? { id: '', firstName: '', lastName: '', grade: knownGrades()[0] || '', serviceType: 'Individual', groupId: '', groupIds: [], noGroup: false, frequencyType: 'Weekly', minutesPerWeek: 60, preferredSessionLength: '', sessionsPerQuarter: '', quarterlySessionLength: '', notes: '', status: 'Active', teacher: '', fixedDay: '', fixedStart: '' }
     : Object.assign({}, state.students[idx]);
   const wrap = document.createElement('div');
   wrap.className = 'modal-bg';
@@ -892,7 +1112,7 @@ function openStudentForm(idx) {
       <div><label>Grade</label><select id="f-grade">${gradeOptions(s.grade)}<option value="__new__">Other grade…</option></select><input id="f-grade-new" class="hidden" placeholder="e.g. 4"></div>
       <div><label>Teacher / room</label><input id="f-teacher" value="${esc(s.teacher)}"></div>
       <div><label>Service</label><select id="f-service"><option>Individual</option><option>Group</option></select></div>
-      <div id="group-fields"><label>Group</label><select id="f-gid-pick">${groupOptions(s.groupId)}</select><input id="f-gid" class="${s.groupId && knownGroups().indexOf(s.groupId) < 0 ? '' : 'hidden'}" placeholder="e.g. G1" value="${esc(s.groupId)}"></div>
+      <div id="group-fields"><label>Group ID(s)</label><select id="f-gid-pick">${groupOptions((s.groupIds && s.groupIds[0]) || s.groupId)}</select><input id="f-gid" class="${(((s.groupIds && s.groupIds[0]) || s.groupId) && knownGroups().indexOf(((s.groupIds && s.groupIds[0]) || s.groupId)) < 0) ? '' : 'hidden'}" placeholder="e.g. G1, G2" value="${esc((s.groupIds && s.groupIds.length) ? s.groupIds.join(', ') : (s.groupId || ''))}"><p class="meta">Comma-separate multiple groups when this student belongs to more than one.</p></div>
       <div id="no-group-fields"><label>Auto-grouping</label><label style="font-weight:500;display:flex;align-items:center;gap:8px;margin:0"><input id="f-nogroup" type="checkbox" style="width:auto" ${s.noGroup ? 'checked' : ''}> No Group — never join an auto-group</label></div>
       <div><label>Frequency</label><select id="f-freq"><option>Weekly</option><option>Quarterly</option></select></div>
       <div><label>Status</label><select id="f-status"><option>Active</option><option>Inactive</option></select></div>
@@ -937,7 +1157,11 @@ function openStudentForm(idx) {
     wrap.querySelector('#quarterly-fields').classList.toggle('hidden', freq !== 'Quarterly');
     wrap.querySelector('#group-fields').classList.toggle('hidden', service !== 'Group');
     wrap.querySelector('#no-group-fields').classList.toggle('hidden', service !== 'Individual');
-    if (service === 'Group' && noGroupEl) noGroupEl.checked = false;
+    if (service === 'Group') {
+      const gid = wrap.querySelector('#f-gid');
+      if (gid) gid.classList.remove('hidden');
+      if (noGroupEl) noGroupEl.checked = false;
+    }
   };
   wrap.querySelector('#f-service').onchange = sync;
   wrap.querySelector('#f-freq').onchange = sync;
@@ -958,10 +1182,15 @@ function openStudentForm(idx) {
   };
   wrap.querySelector('#f-gid-pick').onchange = () => {
     const custom = wrap.querySelector('#f-gid');
-    const isNewGroup = wrap.querySelector('#f-gid-pick').value === '__new__';
-    custom.classList.toggle('hidden', !isNewGroup);
+    const pick = wrap.querySelector('#f-gid-pick').value;
+    const isNewGroup = pick === '__new__';
+    custom.classList.remove('hidden');
     if (isNewGroup) { custom.value = ''; custom.focus(); }
-    else custom.value = wrap.querySelector('#f-gid-pick').value;
+    else if (pick) {
+      const cur = parseGroupIds(custom.value);
+      if (cur.indexOf(pick) < 0) cur.push(pick);
+      custom.value = cur.join(', ');
+    }
   };
   sync();
   wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
@@ -979,9 +1208,10 @@ function openStudentForm(idx) {
       grade: gradePick === '__new__' ? wrap.querySelector('#f-grade-new').value.trim() : gradePick,
       teacher: wrap.querySelector('#f-teacher').value.trim(),
       serviceType: wrap.querySelector('#f-service').value,
-      groupId: wrap.querySelector('#f-service').value === 'Group'
-        ? (groupPick === '__new__' || !gidCustom.classList.contains('hidden') ? gidCustom.value.trim() : groupPick)
-        : '',
+      groupId: '',
+      groupIds: wrap.querySelector('#f-service').value === 'Group'
+        ? parseGroupIds(groupPick === '__new__' || !gidCustom.classList.contains('hidden') ? gidCustom.value : groupPick)
+        : [],
       noGroup: wrap.querySelector('#f-service').value === 'Individual' && wrap.querySelector('#f-nogroup').checked,
       frequencyType: wrap.querySelector('#f-freq').value,
       minutesPerWeek: wrap.querySelector('#f-min').value,
@@ -993,6 +1223,7 @@ function openStudentForm(idx) {
       fixedDay: wrap.querySelector('#f-fd').value,
       fixedStart: fromTimeInput(wrap.querySelector('#f-fs').value),
     };
+    next.groupId = (next.groupIds && next.groupIds[0]) || '';
     if (!next.firstName || !next.lastName) { alert('First and last name are required.'); return; }
     if (!next.id) next.id = suggestId(next);
     if (state.students.some((row, i) => row.id === next.id && i !== idx)) {

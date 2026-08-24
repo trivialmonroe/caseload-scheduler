@@ -34,9 +34,19 @@ function buildRequirements(students, settings) {
   const groups = {};
 
   students.forEach(s => {
-    if (s.serviceType.toLowerCase() === 'group' && s.groupId) {
-      if (!groups[s.groupId]) groups[s.groupId] = [];
-      groups[s.groupId].push(s);
+    const ids = (s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : []);
+    if (s.serviceType.toLowerCase() === 'group' && ids.length) {
+      ids.forEach(gid => {
+        if (!groups[gid]) groups[gid] = [];
+        if (!groups[gid].some(m => m.id === s.id)) groups[gid].push(s);
+      });
+      if (ids.length > 1) {
+        warnings.push({
+          members: [s],
+          reqId: ids.join('+'),
+          message: 'In groups ' + ids.join(', ') + ' — minutes from each group session all count toward this student.'
+        });
+      }
     } else {
       requirements.push(buildRequirementSet(s.id, [s], settings, warnings));
     }
@@ -281,7 +291,7 @@ function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern
     if (session.members.length !== 1 || !individualsById[primary.id]) return;
 
     const hostCandidates = scheduled.filter(entry =>
-      (entry.week === 1 || entry.week === 2) && entry.members.every(m => individualsById[m.id])
+      (entry.week === 1 || entry.week === 2) && entry.members.every(m => !m.noGroup) && entry.members.length < settings.maxGroupSize
     );
     const host = tryJoinCompatibleHost(primary, session.sessionLength, false, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
     if (host) {
@@ -309,7 +319,7 @@ function attemptGroupRescue(unscheduled, scheduled, individualsById, settings, g
       const student = session.members[0];
       const needsEveryWeek = session.week === ALL_WEEKS_KEY;
 
-      const hostCandidates = scheduled.filter(entry => entry.members.every(m => individualsById[m.id]));
+      const hostCandidates = scheduled.filter(entry => entry.members.every(m => !m.noGroup) && entry.members.length < settings.maxGroupSize);
       const host = tryJoinCompatibleHost(student, session.sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
 
       if (host) {

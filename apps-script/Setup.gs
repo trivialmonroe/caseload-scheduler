@@ -66,7 +66,7 @@ function setupSheets() {
 
   const defs = {
     [SHEET_NAMES.STUDENTS]: ['Student ID', 'First Name', 'Last Name', 'Grade',
-      'Service Type (Individual/Group)', 'Group ID',
+      'Service Type (Individual/Group)', 'Group ID (comma-separate multiple)',
       'Frequency Type (Weekly/Quarterly)',
       'Minutes/Week Required (Weekly only)',
       'Preferred Session Length (min, optional, Weekly only)',

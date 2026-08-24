@@ -168,6 +168,17 @@ function truthyFlag(v) {
   return s === 'yes' || s === 'y' || s === 'true' || s === '1';
 }
 
+function parseGroupIds(value) {
+  if (Array.isArray(value)) {
+    return value.map(v => String(v || '').trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+  }
+  return String(value == null ? '' : value)
+    .split(/[,;|/]+/)
+    .map(v => v.trim())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+}
+
 function loadStudents(rows) {
   return (rows || []).map(s => {
     let fixedStart = null;
@@ -176,13 +187,15 @@ function loadStudents(rows) {
     }
     const serviceType = String(s.serviceType).trim();
     const noGroup = truthyFlag(s.noGroup) && serviceType.toLowerCase() !== 'group';
+    const groupIds = noGroup ? [] : parseGroupIds(s.groupIds && s.groupIds.length ? s.groupIds : s.groupId);
     return {
       id: String(s.id).trim(),
       firstName: s.firstName,
       lastName: s.lastName,
       grade: String(s.grade).trim(),
       serviceType: serviceType,
-      groupId: (!noGroup && s.groupId) ? String(s.groupId).trim() : '',
+      groupIds: groupIds,
+      groupId: groupIds[0] || '',
       noGroup: noGroup,
       frequencyType: (String(s.frequencyType).trim().toLowerCase() === 'quarterly') ? 'Quarterly' : 'Weekly',
       minutesPerWeek: Number(s.minutesPerWeek) || 0,
@@ -300,10 +313,22 @@ function buildRequirements(students, settings) {
   const requirements = [];
   const warnings = [];
   const groups = {};
+  const groupedStudentIds = {};
   students.forEach(s => {
-    if (s.serviceType.toLowerCase() === 'group' && s.groupId) {
-      if (!groups[s.groupId]) groups[s.groupId] = [];
-      groups[s.groupId].push(s);
+    const ids = (s.groupIds && s.groupIds.length) ? s.groupIds : (s.groupId ? [s.groupId] : []);
+    if (s.serviceType.toLowerCase() === 'group' && ids.length) {
+      ids.forEach(gid => {
+        if (!groups[gid]) groups[gid] = [];
+        if (!groups[gid].some(m => m.id === s.id)) groups[gid].push(s);
+        groupedStudentIds[s.id] = true;
+      });
+      if (ids.length > 1) {
+        warnings.push({
+          members: [s],
+          reqId: ids.join('+'),
+          message: 'In groups ' + ids.join(', ') + ' — minutes from each group session all count toward this student.'
+        });
+      }
     } else {
       requirements.push(buildRequirementSet(s.id, [s], settings, warnings));
     }
@@ -417,7 +442,11 @@ function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern
     }
     const primary = session.members[0];
     if (session.members.length !== 1 || !individualsById[primary.id]) return;
-    const hostCandidates = scheduled.filter(entry => (entry.week === 1 || entry.week === 2) && entry.members.every(m => individualsById[m.id]));
+    const hostCandidates = scheduled.filter(entry =>
+      (entry.week === 1 || entry.week === 2) &&
+      entry.members.every(m => !m.noGroup) &&
+      entry.members.length < settings.maxGroupSize
+    );
     const host = tryJoinCompatibleHost(primary, session.sessionLength, false, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
     if (host) { const idx = pending.indexOf(session); if (idx !== -1) pending.splice(idx, 1); }
   });
@@ -436,7 +465,10 @@ function attemptGroupRescue(unscheduled, scheduled, individualsById, settings, g
       const session = u.session;
       const student = session.members[0];
       const needsEveryWeek = session.week === ALL_WEEKS_KEY;
-      const hostCandidates = scheduled.filter(entry => entry.members.every(m => individualsById[m.id]));
+      const hostCandidates = scheduled.filter(entry =>
+        entry.members.every(m => !m.noGroup) &&
+        entry.members.length < settings.maxGroupSize
+      );
       const host = tryJoinCompatibleHost(student, session.sessionLength, needsEveryWeek, hostCandidates, settings, gradeBlackouts, studentConstraints, memberBookingsByWeek, reqDaysUsed, groupIdState);
       if (host) { rescuedUnscheduledEntries.push(u); progress = true; continue; }
       stillRemaining.push(u);
@@ -630,6 +662,114 @@ function buildScheduleReview(scheduled, unscheduled, capacityWarnings, students)
 }
 
 
+function scheduledEntriesFromLog(scheduleLog, students) {
+  const studentsById = {};
+  (students || []).forEach(s => { studentsById[s.id] = s; });
+  const map = {};
+  (scheduleLog || []).forEach(r => {
+    const key = sessionKeyFromLogRow(r);
+    if (!map[key]) {
+      let start, end, week;
+      try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
+      const weekText = String(r.week || '').trim();
+      week = (weekText === 'Every Week' || !weekText) ? ALL_WEEKS_KEY : (Number(String(weekText).replace(/[^0-9]/g, '')) || 1);
+      map[key] = {
+        reqId: String(r.groupId || r.studentId || ''),
+        groupId: String(r.groupId || '').trim(),
+        week, day: r.day, start, end,
+        members: [],
+        locked: String(r.locked || '').toLowerCase() === 'yes'
+      };
+    }
+    const sid = String(r.studentId).trim();
+    if (map[key].members.some(m => m.id === sid)) return;
+    const base = studentsById[sid] || {
+      id: sid,
+      firstName: String(r.name || '').split(' ')[0] || sid,
+      lastName: String(r.name || '').split(' ').slice(1).join(' ') || '',
+      grade: r.grade, teacher: r.teacher || '', groupId: r.groupId || '', noGroup: false,
+      frequencyType: 'Weekly', minutesPerWeek: 0, sessionsPerQuarter: 0, quarterlySessionLength: 0
+    };
+    map[key].members.push(base);
+  });
+  return Object.values(map);
+}
+
+function reviewFromScheduleLog(input) {
+  const students = loadStudents(input.students);
+  const scheduled = scheduledEntriesFromLog(input.scheduleLog, students);
+  return buildScheduleReview(scheduled, [], [], students);
+}
+
+function studentMinuteImpact(input, studentId) {
+  const review = reviewFromScheduleLog(input);
+  return review.find(r => r.id === studentId) || null;
+}
+
+function canAddStudentToSession(input, logRow, studentId) {
+  const settings = buildSettings(input.settings);
+  const students = loadStudents(input.students);
+  const student = students.find(s => s.id === studentId);
+  if (!student) return { ok: false, error: 'Student not found or inactive.' };
+  if (student.noGroup) return { ok: false, error: student.firstName + ' is marked No Group.' };
+  const mates = sessionMateRows(input.scheduleLog, logRow);
+  if (mates.some(r => String(r.studentId) === String(studentId))) {
+    return { ok: false, error: 'Already in this session.' };
+  }
+  if (mates.length >= settings.maxGroupSize) {
+    return { ok: false, error: 'Session is at max group size (' + settings.maxGroupSize + ').' };
+  }
+  let start, end;
+  try { start = timeStrToMinutes(logRow.start); end = timeStrToMinutes(logRow.end); } catch (e) {
+    return { ok: false, error: 'Bad session time.' };
+  }
+  const blackouts = getStudentBlackouts(student, loadGradeBlackouts(input.grades), loadStudentConstraints(input.constraints));
+  if ((blackouts[logRow.day] || []).some(b => overlaps(start, end, b.start, b.end))) {
+    return { ok: false, error: 'Conflicts with a grade or student blackout.' };
+  }
+  const weekText = String(logRow.week || '').trim();
+  const weeksHit = (weekText === 'Every Week' || !weekText)
+    ? buildSettings(input.settings).weeksList
+    : [Number(String(weekText).replace(/[^0-9]/g, '')) || 1];
+  const busy = (input.scheduleLog || []).some(r => {
+    if (String(r.studentId) !== String(studentId)) return false;
+    if (String(r.day) !== String(logRow.day)) return false;
+    const rWeek = String(r.week || '').trim();
+    const sameWeek = rWeek === weekText || rWeek === 'Every Week' || weekText === 'Every Week';
+    if (!sameWeek) return false;
+    try {
+      return overlaps(start, end, timeStrToMinutes(r.start), timeStrToMinutes(r.end));
+    } catch (e) { return false; }
+  });
+  if (busy) return { ok: false, error: 'Already booked at this time.' };
+  // Preview coverage if added
+  const previewLog = (input.scheduleLog || []).concat([{
+    studentId: student.id,
+    name: student.firstName + ' ' + student.lastName,
+    grade: student.grade,
+    groupId: logRow.groupId || '',
+    week: logRow.week,
+    day: logRow.day,
+    start: logRow.start,
+    end: logRow.end,
+    duration: end - start,
+    teacher: student.teacher || '',
+    locked: logRow.locked || ''
+  }]);
+  const after = reviewFromScheduleLog(Object.assign({}, input, { scheduleLog: previewLog })).find(r => r.id === student.id);
+  const before = reviewFromScheduleLog(input).find(r => r.id === student.id);
+  return {
+    ok: true,
+    before: before,
+    after: after,
+    warning: after && after.status === 'Over'
+      ? (student.firstName + ' would be over minutes (' + after.scheduled + '/' + after.required + ').')
+      : (after && after.status === 'Under'
+        ? (student.firstName + ' would still be under minutes (' + after.scheduled + '/' + after.required + ').')
+        : '')
+  };
+}
+
 function applySettingsAliases(settings) { return settings; }
 
 const _buildSettingsOrig = buildSettings;
@@ -709,26 +849,50 @@ function computeOpenSlots(input) {
   return { blocks, grades, hasAlternating, minStart, maxEnd };
 }
 
+function sessionKeyFromLogRow(r) {
+  return [String(r.week || '').trim(), String(r.day || '').trim(), String(r.start || '').trim(), String(r.end || '').trim(), String(r.groupId || '').trim()].join('|');
+}
+
+function sessionMateRows(scheduleLog, logRow) {
+  const key = sessionKeyFromLogRow(logRow);
+  const gid = String(logRow.groupId || '').trim();
+  return (scheduleLog || []).filter(r => {
+    if (sessionKeyFromLogRow(r) === key) return true;
+    if (!gid) return false;
+    return String(r.groupId || '').trim() === gid
+      && String(r.week || '').trim() === String(logRow.week || '').trim()
+      && String(r.day || '').trim() === String(logRow.day || '').trim()
+      && String(r.start || '').trim() === String(logRow.start || '').trim();
+  });
+}
+
 function findAlternativeSlots(input, logRow) {
   const settings = buildSettings(input.settings);
   const availByPattern = loadProviderAvailability(input.availability);
   const gradeBlackouts = loadGradeBlackouts(input.grades);
   const studentConstraints = loadStudentConstraints(input.constraints);
   const students = loadStudents(input.students);
-  const student = students.find(s => s.id === logRow.studentId);
-  if (!student) return { error: 'Student not found (may be inactive).', candidates: [] };
+  const studentsById = {};
+  students.forEach(s => { studentsById[s.id] = s; });
+  const mateRows = sessionMateRows(input.scheduleLog, logRow);
+  const mateIds = mateRows.map(r => String(r.studentId).trim());
+  const members = mateIds.map(id => studentsById[id]).filter(Boolean);
+  if (!members.length) {
+    const student = studentsById[logRow.studentId];
+    if (!student) return { error: 'Student not found (may be inactive).', candidates: [] };
+    members.push(student);
+  }
   const weekText = String(logRow.week || '').trim();
   const isAllWeeks = weekText === 'Every Week' || weekText === '';
   const weekNum = isAllWeeks ? ALL_WEEKS_KEY : Number(String(weekText).replace(/[^0-9]/g, ''));
   const providerBookingsByWeek = emptyBookingsByWeek(settings.weeksList);
   const memberBookingsByWeek = {};
   students.forEach(s => { memberBookingsByWeek[s.id] = emptyBookingsByWeek(settings.weeksList); });
-  const excludeGroupId = student.groupId;
+  const movingKeys = {};
+  mateRows.forEach(r => { movingKeys[sessionKeyFromLogRow(r) + '|' + String(r.studentId).trim()] = true; });
   (input.scheduleLog || []).forEach(r => {
     const rowStudentId = String(r.studentId).trim();
-    const rowGroupId = String(r.groupId || '').trim();
-    const isSameEntity = rowStudentId === student.id || (excludeGroupId && rowGroupId === excludeGroupId);
-    if (isSameEntity) return;
+    if (movingKeys[sessionKeyFromLogRow(r) + '|' + rowStudentId]) return;
     const rWeekText = String(r.week || '').trim();
     const rIsAll = rWeekText === 'Every Week';
     let start, end;
@@ -742,12 +906,11 @@ function findAlternativeSlots(input, logRow) {
       }
     });
   });
-  const members = excludeGroupId ? students.filter(s => s.groupId === excludeGroupId) : [student];
   let sessionLength;
   try { sessionLength = timeStrToMinutes(logRow.end) - timeStrToMinutes(logRow.start); } catch (e) { sessionLength = settings.minSessionLength; }
-  const session = { members, sessionLength, week: weekNum, reqId: student.id };
+  const session = { members, sessionLength, week: weekNum, reqId: String(logRow.groupId || members[0].id) };
   const candidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, [], {});
-  return { student, isAllWeeks, weekNum, candidates: candidates.slice(0, 24) };
+  return { student: members[0], members, mateIds, isAllWeeks, weekNum, candidates: candidates.slice(0, 24) };
 }
 
 function buildCalendarModel(logRows, settings, showAllWeeks) {
@@ -766,7 +929,7 @@ function buildCalendarModel(logRows, settings, showAllWeeks) {
   const entryMap = {};
   sessions.forEach(s => {
     const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end + '|' + (s.groupId || s.name);
-    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, names: [], teachers: [], studentIds: [] };
+    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, groupId: s.groupId || '', names: [], teachers: [], studentIds: [] };
     entryMap[key].names.push(s.name);
     entryMap[key].studentIds.push(s.studentId);
     if (s.teacher && entryMap[key].teachers.indexOf(s.teacher) === -1) entryMap[key].teachers.push(s.teacher);
@@ -814,12 +977,15 @@ function validateCaseload(state) {
     const freq = String(s.frequencyType || s.frequencyType || '').trim();
     if (freq !== 'Weekly' && freq !== 'Quarterly') issues.push(label + ': Frequency must be Weekly or Quarterly.');
     const service = String(s.serviceType || s.serviceType || '').trim();
-    const gid = String(s.groupId || s.groupId || '').trim();
+    const gids = parseGroupIds(s.groupIds && s.groupIds.length ? s.groupIds : (s.groupId || s.groupId || ''));
+    const gid = gids[0] || '';
     if (service === 'Group') {
-      if (!gid) issues.push(label + ': Group service needs a Group ID.');
+      if (!gids.length) issues.push(label + ': Group service needs a Group ID (comma-separate multiple).');
       else {
-        if (!groupMembers[gid]) groupMembers[gid] = [];
-        groupMembers[gid].push({ id: label, freq, minutes: s.minutesPerWeek, sessionsQ: s.sessionsPerQuarter, lenQ: s.quarterlySessionLength });
+        gids.forEach(g => {
+          if (!groupMembers[g]) groupMembers[g] = [];
+          groupMembers[g].push({ id: label, freq, minutes: s.minutesPerWeek, sessionsQ: s.sessionsPerQuarter, lenQ: s.quarterlySessionLength });
+        });
       }
       if (truthyFlag(s.noGroup)) issues.push(label + ': No Group cannot be set on a Group student.');
     }
@@ -913,7 +1079,8 @@ function normalizeImportedStudent(o) {
     lastName: get('lastName', 'Last Name', 'last'),
     grade: get('grade'),
     serviceType: get('serviceType', 'Service Type') || 'Individual',
-    groupId: get('groupId', 'Group ID'),
+    groupId: get('groupId', 'Group ID', 'groupIds', 'Group IDs'),
+    groupIds: get('groupIds', 'Group IDs', 'groupId', 'Group ID'),
     noGroup: get('noGroup', 'No Group', 'NoGroup'),
     frequencyType: get('frequencyType', 'Frequency Type') || 'Weekly',
     minutesPerWeek: get('minutesPerWeek', 'Minutes/Week'),
@@ -938,6 +1105,8 @@ if (typeof module !== 'undefined' && module.exports) {
     DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
     computeOpenSlots, findAlternativeSlots, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
-    CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes
+    CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
+    sessionMateRows, sessionKeyFromLogRow, findAlternativeSlots, reviewFromScheduleLog,
+    scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
   };
 }
