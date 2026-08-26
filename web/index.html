@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caseload — Scheduler</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -301,16 +302,55 @@
     .cal-legend .swatch.green { background: var(--open); box-shadow: inset 0 0 0 2px #15803d; }
     .cal-legend .swatch.amber { background: var(--clay-soft); box-shadow: inset 0 0 0 2px var(--clay); outline: 1px dashed #c2410c; }
     .week-layout {
-      display: grid; grid-template-columns: 1fr; gap: 0; align-items: start;
+      display: block;
+    }
+    .week-layout.drawer-open .week-main {
+      padding-right: 0;
     }
     @media (min-width: 1100px) {
-      .week-layout.drawer-open { grid-template-columns: 1fr min(340px, 32vw); gap: 16px; }
+      .week-layout.drawer-open .week-main {
+        padding-right: min(392px, 36vw);
+      }
     }
     .session-drawer {
       background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 14px 16px; box-shadow: var(--shadow); max-height: calc(100vh - 120px);
-      overflow: auto; position: sticky; top: 72px;
+      padding: 16px; box-shadow: var(--shadow);
+      width: min(360px, calc(100vw - 24px));
+      max-height: calc(100vh - 80px);
+      overflow: auto;
+      z-index: 35;
       animation: riseIn 180ms ease;
+      box-sizing: border-box;
+    }
+    /* Overlay so the calendar min-width never squeezes the editor. */
+    @media (min-width: 720px) {
+      .session-drawer {
+        position: fixed;
+        top: 70px;
+        right: 14px;
+        bottom: 14px;
+        max-height: none;
+        height: auto;
+      }
+    }
+    @media (max-width: 719px) {
+      .session-drawer {
+        margin: 14px 0 0;
+        width: 100%;
+        max-height: min(70vh, 520px);
+      }
+    }
+    .session-drawer .drawer-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin: 0 0 8px;
+    }
+    .session-drawer .drawer-head h3 { margin: 0; font-size: 1.05rem; flex: 1; min-width: 0; }
+    .session-drawer .drawer-meta {
+      display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 4px;
+      font-size: 12px; color: var(--muted); line-height: 1.35;
+    }
+    .session-drawer .drawer-meta span {
+      white-space: nowrap;
     }
     .session-drawer h3 { margin: 0 0 4px; font-size: 1rem; }
     .session-drawer details.drawer-sec {
@@ -321,6 +361,19 @@
       display: flex; align-items: center; justify-content: space-between; color: var(--ink);
     }
     .session-drawer details.drawer-sec > summary::-webkit-details-marker { display: none; }
+    .session-drawer .add-row {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+    }
+    .session-drawer .add-row select { width: 100%; min-width: 0; }
+    .member-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+    .member-row {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+      font-size: 13px; padding: 8px 10px; border: 1px solid var(--line);
+      border-radius: var(--radius-sm); background: #f5f8f6;
+    }
+    .member-row .member-name { font-weight: 600; word-break: break-word; }
+    .member-row .member-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .member-row .pill { white-space: nowrap; margin: 0; }
     .sess-badge {
       display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .03em;
       padding: 1px 4px; border-radius: 4px; margin-right: 4px; vertical-align: middle;
@@ -339,8 +392,6 @@
     .print-panel .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 12px 0; }
     .print-panel label.chk { font-weight: 500; display: flex; gap: 8px; align-items: center; margin: 0; }
     .print-panel input[type="checkbox"] { width: auto; }
-    .member-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
-    .member-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
     .sess .sess-sub { display: block; opacity: .9; font-size: 10px; }
     @media print {
       aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .session-drawer, .print-panel { display: none !important; }
@@ -991,26 +1042,35 @@ function sessionPopoverHtml() {
     return true;
   });
   let html = `<aside class="session-drawer no-print" id="session-popover">
-    <div class="row" style="margin:0 0 8px;justify-content:space-between">
+    <div class="drawer-head">
       <h3>Session editor</h3>
       <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
     </div>
-    <p class="meta">${esc(row.week)} · ${esc(row.day)} ${esc(row.start)}–${esc(row.end)} · ${esc(row.duration)} min${row.groupId ? ' · ' + esc(row.groupId) : ''}${locked ? ' · 🔒 Locked' : ''}${autoGroup ? ' · Auto-group' : ''}</p>
+    <div class="drawer-meta">
+      <span>${esc(row.week || 'Every Week')}</span>
+      <span>${esc(row.day)} ${esc(row.start)}–${esc(row.end)}</span>
+      <span>${esc(row.duration)} min</span>
+      ${row.groupId ? `<span>${esc(row.groupId)}</span>` : ''}
+      ${locked ? '<span>🔒 Locked</span>' : ''}
+      ${autoGroup ? '<span>Auto-group</span>' : ''}
+    </div>
     <details class="drawer-sec" open><summary>Members</summary>
     <div class="member-list">`;
   mates.forEach(m => {
     const cov = review.find(r => r.id === m.studentId);
     const covTxt = cov ? (cov.status + ' · ' + cov.scheduled + '/' + cov.required + ' min') : '';
     html += `<div class="member-row">
-      <span>${esc(m.name)} <span class="meta">Gr ${esc(m.grade)}</span></span>
-      ${covTxt ? `<span class="pill ${cov.status === 'Under' ? 'bad' : (cov.status === 'Over' ? 'warn' : 'ok')}">${esc(covTxt)}</span>` : ''}
-      ${mates.length > 1 ? `<button type="button" class="ghost danger" onclick="removeFromSession('${esc(m.studentId)}')">Remove</button>` : ''}
+      <div class="member-name">${esc(m.name)} <span class="meta">Gr ${esc(m.grade)}</span></div>
+      <div class="member-actions">
+        ${covTxt ? `<span class="pill ${cov.status === 'Under' ? 'bad' : (cov.status === 'Over' ? 'warn' : 'ok')}">${esc(covTxt)}</span>` : ''}
+        ${mates.length > 1 ? `<button type="button" class="ghost danger" onclick="removeFromSession('${esc(m.studentId)}')">Remove</button>` : ''}
+      </div>
     </div>`;
   });
   html += `</div>
     <div class="field" style="margin-top:10px"><label>Add student</label>
-      <div class="row" style="margin:0">
-        <select id="add-member" style="max-width:240px"><option value="">Choose…</option>${addOptions.map(s =>
+      <div class="add-row">
+        <select id="add-member"><option value="">Choose…</option>${addOptions.map(s =>
           `<option value="${esc(s.id)}">${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select>
         <button type="button" onclick="addToSession()">Add</button>
       </div></div></details>
