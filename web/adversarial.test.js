@@ -154,6 +154,18 @@ eng.applyWorkbookImports(ws, {
 }, { merge: false });
 assert('Workbook replace students', ws.students.length === 1 && ws.students[0].id === 'new');
 
+console.log('\n=== Validation ===');
+
+assert(
+  'Missing grade blocks is not a validation issue',
+  !eng.validateCaseload({
+    settings: {},
+    students: [{ id: 'w1', firstName: 'Walk', lastName: 'In', grade: '4', serviceType: 'Walk in', frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }],
+    availability: [{ day: 'Mon', start: '8:00 AM', end: '3:00 PM' }],
+    grades: []
+  }).some(i => /grade-level blocks/i.test(i))
+);
+
 console.log('\n=== Locked blank week ===');
 
 const locked = eng.loadLockedSessions([{

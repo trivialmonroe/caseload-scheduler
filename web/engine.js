@@ -1267,9 +1267,6 @@ function validateCaseload(state) {
   const settings = buildSettings(state.settings);
   const issues = [];
   const students = state.students || [];
-  const gradeRows = state.grades || [];
-  const gradesInUse = {};
-  gradeRows.forEach(r => { gradesInUse[String(r.grade).trim()] = true; });
   const groupMembers = {};
   students.forEach(s => {
     if (String(s.status || 'Active').toLowerCase() !== 'active') return;
@@ -1290,8 +1287,6 @@ function validateCaseload(state) {
       }
       if (truthyFlag(s.noGroup)) issues.push(label + ': No Group cannot be set on a Group student.');
     }
-    const grade = String(s.grade || '').trim();
-    if (grade && !gradesInUse[grade]) issues.push(label + ': Grade "' + grade + '" has no grade-level blocks (lunch/specials will not apply).');
     if (freq === 'Weekly' && !(Number(s.minutesPerWeek) > 0)) issues.push(label + ': Weekly student needs minutes/week.');
     if (freq === 'Quarterly' && (!(Number(s.sessionsPerQuarter) > 0) || !(Number(s.quarterlySessionLength) > 0))) issues.push(label + ': Quarterly student needs sessions/quarter and length.');
   });
