@@ -80,6 +80,47 @@ assert(
   'entries: ' + JSON.stringify(cal.entries.map(e => e.weekLabel))
 );
 
+assert(
+  'normalizeScheduleDay maps Tuesday to Tue',
+  eng.normalizeScheduleDay('Tuesday') === 'Tue'
+);
+
+assert(
+  'normalizeWeekLabel maps week 1 to Week 1',
+  eng.normalizeWeekLabel('week 1') === 'Week 1'
+);
+
+const messyCal = eng.buildCalendarModel(
+  [
+    { studentId: 'a', name: 'Alice', grade: '2', groupId: 'G1', week: 'week 1', day: 'Tuesday', start: '10:00 AM', end: '10:30 AM' },
+    { studentId: 'b', name: 'Bob', grade: '2', groupId: 'G1', week: 'week 1', day: 'Tuesday', start: '10:00 AM', end: '10:30 AM' }
+  ],
+  eng.buildSettings({}),
+  false,
+  [{ day: 'Mon', start: '8:00 AM', end: '3:00 PM' }]
+);
+assert(
+  'Messy day/week group session appears on Week 1 Tue calendar',
+  messyCal.entries.some(e => e.weekLabel === 'Week 1' && e.day === 'Tue' && e.names.length === 2),
+  'entries: ' + JSON.stringify(messyCal.entries)
+);
+
+const messyReview = eng.reviewFromScheduleLog({
+  scheduleLog: [
+    { studentId: 'a', name: 'Alice', grade: '2', groupId: 'G1', week: 'week 1', day: 'Tuesday', start: '10:00 AM', end: '10:30 AM' },
+    { studentId: 'b', name: 'Bob', grade: '2', groupId: 'G1', week: 'week 1', day: 'Tuesday', start: '10:00 AM', end: '10:30 AM' }
+  ],
+  students: [
+    { id: 'a', firstName: 'Alice', lastName: 'X', grade: '2', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' },
+    { id: 'b', firstName: 'Bob', lastName: 'Y', grade: '2', serviceType: 'Group', groupId: 'G1', frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }
+  ]
+});
+assert(
+  'Messy schedule log counts minutes in live coverage review',
+  messyReview.length === 2 && messyReview.every(r => r.scheduled === 30),
+  JSON.stringify(messyReview.map(r => ({ id: r.id, scheduled: r.scheduled })))
+);
+
 console.log('\n=== Move / alternative slot occupancy ===');
 
 const input = baseInput();

@@ -537,7 +537,10 @@ function persist() {
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
 }
 function persistCaseload() {
-  if ((state.scheduleLog || []).length) caseloadDirty = true;
+  if ((state.scheduleLog || []).length) {
+    caseloadDirty = true;
+    refreshLiveReview('Caseload updated — coverage refreshed from the schedule.');
+  }
   persist();
 }
 function hydrate() {
@@ -960,6 +963,7 @@ document.getElementById('filePick').addEventListener('change', (e) => {
 });
 
 function reviewRows() {
+  if ((state.scheduleLog || []).length) return reviewFromScheduleLog(engineInput());
   if (state.lastRun && state.lastRun.review) return state.lastRun.review;
   return [];
 }
@@ -1314,7 +1318,7 @@ function renderWeekGrid(cal, week) {
       const isSel = selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId);
       const logIdx = (state.scheduleLog || []).findIndex(row => {
         try {
-          return row.day === c.day && timeStrToMinutes(row.start) === c.start && String(row.studentId) === String(c.studentId);
+          return normalizeScheduleDay(row.day) === c.day && timeStrToMinutes(row.start) === c.start && String(row.studentId) === String(c.studentId);
         } catch (e) { return false; }
       });
       const locked = logIdx >= 0 && String(state.scheduleLog[logIdx].locked).toLowerCase() === 'yes';
@@ -1591,7 +1595,7 @@ function bindCalendarDnD() {
       beginEdit('Move on calendar');
       moveSessionToCandidate(idx, cand);
       altFor = state.scheduleLog.findIndex(r =>
-        String(r.studentId) === String(studentId) && r.day === cand.day &&
+        String(r.studentId) === String(studentId) && normalizeScheduleDay(r.day) === cand.day &&
         (() => { try { return timeStrToMinutes(r.start) === cand.start; } catch (err) { return false; } })()
       );
       if (altFor < 0) altFor = null;
@@ -1605,7 +1609,7 @@ function bindCalendarDnD() {
 
 function openCalendarSession(day, startMins, studentId) {
   const i = (state.scheduleLog || []).findIndex(r => {
-    try { return r.day === day && timeStrToMinutes(r.start) === startMins && String(r.studentId) === String(studentId); }
+    try { return normalizeScheduleDay(r.day) === day && timeStrToMinutes(r.start) === startMins && String(r.studentId) === String(studentId); }
     catch (e) { return false; }
   });
   if (i < 0) { setStatus('Could not find that session.', 'bad'); return; }
@@ -1930,6 +1934,11 @@ function openStudentForm(idx) {
       const oldId = state.students[idx].id;
       state.students[idx] = next;
       if (oldId !== next.id) state.constraints.forEach(c => { if (c.studentId === oldId) c.studentId = next.id; });
+    }
+    if (next.serviceType === 'Group' && next.groupId) {
+      (state.scheduleLog || []).forEach(r => {
+        if (String(r.studentId) === String(next.id)) r.groupId = next.groupId;
+      });
     }
     persistCaseload();
     wrap.remove();
