@@ -252,7 +252,22 @@ function weekLabel(week) {
 function normalizeWeekLabel(raw) {
   const w = String(raw || '').trim();
   if (!w || w.toLowerCase() === 'every week') return 'Every Week';
+  const n = Number(String(w).replace(/[^0-9]/g, ''));
+  if (Number.isFinite(n) && n > 0) return 'Week ' + n;
   return w;
+}
+
+/** Map schedule day cells to Mon–Fri (calendar grid + engine use short labels). */
+function normalizeScheduleDay(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const lower = s.toLowerCase();
+  const full = { monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu', friday: 'Fri' };
+  if (full[lower]) return full[lower];
+  const short = lower.slice(0, 3);
+  if (DAY_INDEX[short] !== undefined) return DAYS[DAY_INDEX[short]];
+  if (DAYS.indexOf(s) >= 0) return s;
+  return s;
 }
 
 function gradeSortValue(grade) {
@@ -680,12 +695,12 @@ function scheduledEntriesFromLog(scheduleLog, students) {
     if (!map[key]) {
       let start, end, week;
       try { start = timeStrToMinutes(r.start); end = timeStrToMinutes(r.end); } catch (e) { return; }
-      const weekText = String(r.week || '').trim();
-      week = (weekText === 'Every Week' || !weekText) ? ALL_WEEKS_KEY : (Number(String(weekText).replace(/[^0-9]/g, '')) || 1);
+      const weekText = normalizeWeekLabel(r.week);
+      week = (weekText === 'Every Week') ? ALL_WEEKS_KEY : (Number(String(weekText).replace(/[^0-9]/g, '')) || 1);
       map[key] = {
         reqId: String(r.groupId || r.studentId || ''),
         groupId: String(r.groupId || '').trim(),
-        week, day: r.day, start, end,
+        week, day: normalizeScheduleDay(r.day), start, end,
         members: [],
         locked: String(r.locked || '').toLowerCase() === 'yes'
       };
@@ -864,19 +879,30 @@ function computeOpenSlots(input) {
 }
 
 function sessionKeyFromLogRow(r) {
-  return [String(r.week || '').trim(), String(r.day || '').trim(), String(r.start || '').trim(), String(r.end || '').trim(), String(r.groupId || '').trim()].join('|');
+  return [
+    normalizeWeekLabel(r.week),
+    normalizeScheduleDay(r.day),
+    String(r.start || '').trim(),
+    String(r.end || '').trim(),
+    String(r.groupId || '').trim()
+  ].join('|');
 }
 
 function sessionMateRows(scheduleLog, logRow) {
   const key = sessionKeyFromLogRow(logRow);
   const gid = String(logRow.groupId || '').trim();
+  const week = normalizeWeekLabel(logRow.week);
+  const day = normalizeScheduleDay(logRow.day);
+  const start = String(logRow.start || '').trim();
+  const end = String(logRow.end || '').trim();
   return (scheduleLog || []).filter(r => {
     if (sessionKeyFromLogRow(r) === key) return true;
     if (!gid) return false;
     return String(r.groupId || '').trim() === gid
-      && String(r.week || '').trim() === String(logRow.week || '').trim()
-      && String(r.day || '').trim() === String(logRow.day || '').trim()
-      && String(r.start || '').trim() === String(logRow.start || '').trim();
+      && normalizeWeekLabel(r.week) === week
+      && normalizeScheduleDay(r.day) === day
+      && String(r.start || '').trim() === start
+      && String(r.end || '').trim() === end;
   });
 }
 
@@ -1173,19 +1199,25 @@ function findSwapCandidates(input, logRow) {
 
 function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   settings = buildSettings(settings);
-  const sessions = (logRows || []).map(r => ({
-    grade: String(r.grade || '').trim(),
-    groupId: r.groupId ? String(r.groupId).trim() : '',
-    name: r.name,
-    weekLabel: normalizeWeekLabel(r.week),
-    day: r.day,
-    start: timeStrToMinutes(r.start),
-    end: timeStrToMinutes(r.end),
-    teacher: r.teacher ? String(r.teacher).trim() : '',
-    studentId: r.studentId
-  }));
+  const sessions = [];
+  (logRows || []).forEach(r => {
+    try {
+      sessions.push({
+        grade: String(r.grade || '').trim(),
+        groupId: r.groupId ? String(r.groupId).trim() : '',
+        name: r.name,
+        weekLabel: normalizeWeekLabel(r.week),
+        day: normalizeScheduleDay(r.day),
+        start: timeStrToMinutes(r.start),
+        end: timeStrToMinutes(r.end),
+        teacher: r.teacher ? String(r.teacher).trim() : '',
+        studentId: r.studentId
+      });
+    } catch (e) { /* skip row with bad times */ }
+  });
   const entryMap = {};
   sessions.forEach(s => {
+    if (!s.day || !DAYS.includes(s.day)) return;
     const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end + '|' + (s.groupId || s.name);
     if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, groupId: s.groupId || '', names: [], teachers: [], studentIds: [] };
     entryMap[key].names.push(s.name);
@@ -1451,7 +1483,7 @@ function normalizeImportedScheduleRow(o) {
     grade: csvRowGet(o, 'grade', 'Grade'),
     groupId: csvRowGet(o, 'groupId', 'Group ID'),
     week: normalizeWeekLabel(csvRowGet(o, 'week', 'Week')),
-    day: csvRowGet(o, 'day', 'Day'),
+    day: normalizeScheduleDay(csvRowGet(o, 'day', 'Day')),
     start: normalizeImportedTime(csvRowGet(o, 'start', 'Start Time', 'Start')),
     end: normalizeImportedTime(csvRowGet(o, 'end', 'End Time', 'End')),
     duration: dur !== '' ? Number(dur) : Number(csvRowGet(o, 'Duration (min)', 'Duration (minutes)')) || '',
@@ -1591,7 +1623,7 @@ if (typeof module !== 'undefined' && module.exports) {
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     normalizeHeaderKey, csvRowGet, sheetNameToKind, importTableRows, applyWorkbookImports,
     mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow, normalizeWeekLabel,
-    loadLockedSessions,
+    normalizeScheduleDay, loadLockedSessions,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
     sessionMateRows, sessionKeyFromLogRow, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
