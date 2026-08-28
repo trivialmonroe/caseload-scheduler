@@ -9,9 +9,6 @@ function validateData() {
   const issues = [];
 
   const rawStudentRows = getSheetRows(SHEET_NAMES.STUDENTS);
-  const gradeRows = getSheetRows(SHEET_NAMES.GRADES);
-  const gradesInUse = {};
-  gradeRows.forEach(r => { gradesInUse[String(r[0]).trim()] = true; });
 
   const groupMembers = {};
 
@@ -39,11 +36,6 @@ function validateData() {
     const noGroup = noGroupRaw === 'yes' || noGroupRaw === 'y' || noGroupRaw === 'true' || noGroupRaw === '1';
     if (noGroup && serviceType === 'Group') {
       issues.push(`${label}: No Group cannot be Yes when Service Type is Group.`);
-    }
-
-    const grade = String(r[3]).trim();
-    if (grade && !gradesInUse[grade]) {
-      issues.push(`${label}: Grade "${grade}" has no rows on the Grades tab - no grade-level blackouts (lunch/recess/specials) will apply.`);
     }
 
     if (rawFreq === 'Weekly' && (!r[7] || Number(r[7]) <= 0)) {
