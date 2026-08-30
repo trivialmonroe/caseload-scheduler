@@ -27,9 +27,10 @@ This repo ships **two products** that share a scheduling algorithm:
 
 ### Google Apps Script version
 
-- Sources live in `apps-script/` (including `appsscript.json` and `StudentForm.html`).
+- Sources live in `apps-script/` (including `appsscript.json`, `StudentForm.html`, and `SessionEditing.gs` for move/swap/coverage parity).
 - No package manager, build, or automated tests for Sheets. Optional local check: `node dev/run-engine.js` (stubs SpreadsheetApp, runs `generateSchedule()` on sample data).
 - Web import/edge regressions: `node web/adversarial.test.js`.
+- Sheets session-edit parity: menu actions on Schedule_Log (move, swap, add student, refresh coverage) via `SessionEditing.gs`.
 - `clasp` (optional) should run from `apps-script/`. Login is interactive, not headless.
 
 `standalone/CaseloadScheduler.html` redirects to `web/index.html`.

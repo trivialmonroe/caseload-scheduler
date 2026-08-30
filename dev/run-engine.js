@@ -256,9 +256,9 @@ function seed(ss) {
 // Load the unmodified .gs sources and expose the functions we need to drive.
 // ---------------------------------------------------------------------------
 function loadEngine(ss) {
-  const files = ['Constants.gs', 'DataHelpers.gs', 'SchedulingEngine.gs', 'Outputs.gs', 'Setup.gs', 'Interactive.gs'];
+  const files = ['Constants.gs', 'DataHelpers.gs', 'SchedulingEngine.gs', 'Outputs.gs', 'SessionEditing.gs', 'Setup.gs', 'Interactive.gs'];
   const src = files.map((f) => fs.readFileSync(path.join(REPO_ROOT, "apps-script", f), 'utf8')).join('\n\n');
-  const body = src + '\nreturn { generateSchedule: generateSchedule };';
+  const body = src + '\nreturn { generateSchedule: generateSchedule, normalizeScheduleDay: normalizeScheduleDay, normalizeWeekLabel: normalizeWeekLabel, reviewFromScheduleLogObjects: reviewFromScheduleLogObjects, loadScheduleLogObjects: loadScheduleLogObjects };';
   const factory = new Function('SpreadsheetApp', 'HtmlService', 'Logger', body);
   const SpreadsheetApp = makeSpreadsheetApp(ss);
   const noop = chainable();
@@ -312,6 +312,24 @@ function main() {
     process.exit(1);
   }
   console.log('\nOK: ' + placedRows + ' scheduled session row(s) written to Schedule_Log.');
+
+  // Parity check: messy day/week labels normalize for printable schedule path
+  assert('normalizeScheduleDay(Tuesday) -> Tue', engine.normalizeScheduleDay('Tuesday') === 'Tue');
+  assert('normalizeWeekLabel(week 1) -> Week 1', engine.normalizeWeekLabel('week 1') === 'Week 1');
+
+  const logObjects = engine.loadScheduleLogObjects();
+  const students = []; // harness has no loadStudents export; review uses sheet data via scheduled entries
+  if (logObjects.length) {
+    console.log('\nSchedule_Log sample row day:', logObjects[0].day);
+  }
+}
+
+function assert(name, cond) {
+  if (!cond) {
+    console.error('FAIL:', name);
+    process.exit(1);
+  }
+  console.log('  OK ', name);
 }
 
 main();

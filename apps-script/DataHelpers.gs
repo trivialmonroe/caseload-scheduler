@@ -260,8 +260,8 @@ function loadLockedSessions() {
     const groupId = r[3] ? String(r[3]).trim() : '';
     const reqId = groupId || studentId;
     const weekLabelRaw = String(r[4]).trim();
-    const week = weekLabelRaw === 'Every Week' ? ALL_WEEKS_KEY : (Number(weekLabelRaw.replace(/[^0-9]/g, '')) || 1);
-    const day = r[5];
+    const week = normalizeWeekLabel(weekLabelRaw) === 'Every Week' ? ALL_WEEKS_KEY : (Number(String(weekLabelRaw).replace(/[^0-9]/g, '')) || 1);
+    const day = normalizeScheduleDay(r[5]);
     let start, end;
     try { start = timeStrToMinutes(r[6]); end = timeStrToMinutes(r[7]); } catch (e) { return; } // skip malformed rows rather than crash
     const key = reqId + '|' + week + '|' + day + '|' + start + '|' + end;
@@ -287,6 +287,28 @@ function weeksForEntry(weekValue, settings) {
 
 function weekLabel(week) {
   return week === ALL_WEEKS_KEY ? 'Every Week' : `Week ${week}`;
+}
+
+/** Blank / missing week means weekly (every week). */
+function normalizeWeekLabel(raw) {
+  const w = String(raw || '').trim();
+  if (!w || w.toLowerCase() === 'every week') return 'Every Week';
+  const n = Number(String(w).replace(/[^0-9]/g, ''));
+  if (Number.isFinite(n) && n > 0) return 'Week ' + n;
+  return w;
+}
+
+/** Map schedule day cells to Mon–Fri (calendar grid + engine use short labels). */
+function normalizeScheduleDay(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const lower = s.toLowerCase();
+  const full = { monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu', friday: 'Fri' };
+  if (full[lower]) return full[lower];
+  const short = lower.slice(0, 3);
+  if (DAY_INDEX[short] !== undefined) return DAYS[DAY_INDEX[short]];
+  if (DAYS.indexOf(s) >= 0) return s;
+  return s;
 }
 
 function gradeSortValue(grade) {

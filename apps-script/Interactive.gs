@@ -24,17 +24,19 @@ function validateData() {
     }
 
     const serviceType = String(r[4]).trim();
-    const groupId = r[5] ? String(r[5]).trim() : '';
-    if (serviceType === 'Group') {
-      if (!groupId) issues.push(`${label}: Service Type is Group but Group ID is blank.`);
+    const gids = parseGroupIds(r[5]);
+    if (serviceType.toLowerCase() === 'group') {
+      if (!gids.length) issues.push(`${label}: Service Type is Group but Group ID is blank.`);
       else {
-        if (!groupMembers[groupId]) groupMembers[groupId] = [];
-        groupMembers[groupId].push({ id: label, freq: rawFreq, minutes: r[7], preferredLen: r[8], sessionsQ: r[9], lenQ: r[10] });
+        gids.forEach(gid => {
+          if (!groupMembers[gid]) groupMembers[gid] = [];
+          groupMembers[gid].push({ id: label, freq: rawFreq, minutes: r[7], preferredLen: r[8], sessionsQ: r[9], lenQ: r[10] });
+        });
       }
     }
     const noGroupRaw = String(r[17] == null ? '' : r[17]).trim().toLowerCase();
     const noGroup = noGroupRaw === 'yes' || noGroupRaw === 'y' || noGroupRaw === 'true' || noGroupRaw === '1';
-    if (noGroup && serviceType === 'Group') {
+    if (noGroup && serviceType.toLowerCase() === 'group') {
       issues.push(`${label}: No Group cannot be Yes when Service Type is Group.`);
     }
 
@@ -107,78 +109,158 @@ function onEdit(e) {
 
 function showAlternativesForSelection() {
   const ui = SpreadsheetApp.getUi();
-  const activeSheet = SpreadsheetApp.getActiveSheet();
-  const row = SpreadsheetApp.getActiveRange().getRow();
-  const name = activeSheet.getName();
-
-  if (row < 2 || name !== SHEET_NAMES.LOG) {
+  const logRow = getSelectedLogRowFromSheet();
+  if (!logRow) {
     ui.alert('Select a row on the Schedule_Log tab first. (For anything unscheduled or under minutes, check Schedule_Review.)');
     return;
   }
 
-  const studentId = String(activeSheet.getRange(row, 1).getValue()).trim();
-  if (!studentId) { ui.alert('No Student ID found on that row.'); return; }
-
-  const settings = loadSettings();
-  const availByPattern = loadProviderAvailability();
-  const gradeBlackouts = loadGradeBlackouts();
-  const studentConstraints = loadStudentConstraints();
-  const students = loadStudents();
-  const student = students.find(s => s.id === studentId);
-  if (!student) { ui.alert('Student not found (may be inactive).'); return; }
-
-  const weekText = String(activeSheet.getRange(row, 5).getValue()).trim(); // "Every Week" / "Week 2" / ""
-  const isAllWeeks = weekText === 'Every Week' || weekText === '';
-  const weekNum = isAllWeeks ? ALL_WEEKS_KEY : Number(weekText.replace(/[^0-9]/g, ''));
-
-  const logRows = getSheetRows(SHEET_NAMES.LOG);
-  const providerBookingsByWeek = emptyBookingsByWeek(settings.weeksList);
-  const memberBookingsByWeek = {};
-  students.forEach(s => { memberBookingsByWeek[s.id] = emptyBookingsByWeek(settings.weeksList); });
-
-  const excludeGroupId = student.groupId;
-
-  logRows.forEach(r => {
-    const rowStudentId = String(r[0]).trim();
-    const rowGroupId = String(r[3]).trim();
-    const isSameEntity = rowStudentId === studentId || (excludeGroupId && rowGroupId === excludeGroupId);
-    if (isSameEntity) return; // exclude this student/group's own current bookings
-
-    const rWeekText = String(r[4]).trim();
-    const rIsAll = rWeekText === 'Every Week';
-    const day = r[5], start = timeStrToMinutes(r[6]), end = timeStrToMinutes(r[7]);
-    const weeksHit = rIsAll ? settings.weeksList : [Number(rWeekText.replace(/[^0-9]/g, ''))];
-
-    weeksHit.forEach(w => {
-      if (!providerBookingsByWeek[w]) return;
-      providerBookingsByWeek[w][day].push({ start, end });
-      if (memberBookingsByWeek[rowStudentId] && memberBookingsByWeek[rowStudentId][w]) {
-        memberBookingsByWeek[rowStudentId][w][day].push({ start, end });
-      }
-    });
-  });
-
-  const members = excludeGroupId ? students.filter(s => s.groupId === excludeGroupId) : [student];
-
-  let sessionLength;
-  if (name === SHEET_NAMES.LOG) {
-    sessionLength = timeStrToMinutes(activeSheet.getRange(row, 8).getValue()) - timeStrToMinutes(activeSheet.getRange(row, 7).getValue());
-  } else {
-    sessionLength = Number(activeSheet.getRange(row, 7).getValue()) ||
-      (student.frequencyType === 'Quarterly' ? student.quarterlySessionLength : computeWeeklyPlan(student.minutesPerWeek, settings, student.preferredSessionLength).lengths[0]);
+  const result = findAlternativeSlotsForLogRow(logRow);
+  if (result.error) {
+    ui.alert(result.error);
+    return;
   }
-
-  const session = { members, sessionLength, week: weekNum };
-  const candidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, []);
-
-  if (!candidates.length) {
+  if (!result.candidates.length) {
     ui.alert('No alternative slots exist given current bookings and constraints.');
     return;
   }
 
-  const list = candidates.slice(0, 20).map(c => `${c.day}  ${minutesToTimeStr(c.start)} - ${minutesToTimeStr(c.end)}`).join('\n');
-  const scopeLabel = isAllWeeks ? '(applies every week)' : `(${weekLabel(weekNum)} only)`;
-  ui.alert(`Alternatives for ${student.firstName} ${student.lastName}${excludeGroupId ? ' (group ' + excludeGroupId + ')' : ''} ${scopeLabel} - showing up to 20:\n\n${list}\n\nManually update the Schedule_Log row's Day/Start/End to apply your pick, or delete the row and re-run Generate Schedule to let the algorithm re-place it.`);
+  const list = result.candidates.slice(0, 20).map((c, i) =>
+    `${i + 1}. ${c.day}  ${minutesToTimeStr(c.start)} - ${minutesToTimeStr(c.end)}${c.week != null && c.week !== ALL_WEEKS_KEY ? ' (' + weekLabel(c.week) + ')' : ''}`
+  ).join('\n');
+  const student = result.members[0];
+  const scopeLabel = result.isAllWeeks ? '(applies every week)' : '(' + weekLabel(result.weekNum) + ' only)';
+  const groupNote = logRow.groupId ? ' (group ' + logRow.groupId + ')' : '';
+  ui.alert(
+    `Alternatives for ${student.firstName} ${student.lastName}${groupNote} ${scopeLabel} — showing up to 20 (spread across days):\n\n${list}\n\nUse "Move Selected Session to Alternative" and enter the number, or manually update Day/Start/End on Schedule_Log.`
+  );
+}
+
+function moveSelectedSessionToAlternative() {
+  const ui = SpreadsheetApp.getUi();
+  const logRow = getSelectedLogRowFromSheet();
+  if (!logRow) {
+    ui.alert('Select a row on the Schedule_Log tab first.');
+    return;
+  }
+  if (String(logRow.locked).toLowerCase() === 'yes') {
+    ui.alert('Unlock this session first (clear Locked column), then move it.');
+    return;
+  }
+
+  const result = findAlternativeSlotsForLogRow(logRow);
+  if (result.error) { ui.alert(result.error); return; }
+  if (!result.candidates.length) {
+    ui.alert('No alternative slots exist given current bookings and constraints.');
+    return;
+  }
+
+  const picks = result.candidates.slice(0, 12);
+  const list = picks.map((c, i) =>
+    `${i + 1}. ${c.day} ${minutesToTimeStr(c.start)}-${minutesToTimeStr(c.end)}`
+  ).join('\n');
+  const resp = ui.prompt(
+    'Move session',
+    `Pick a slot number (moves the whole group):\n\n${list}`,
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const n = Number(String(resp.getResponseText()).trim());
+  if (!Number.isFinite(n) || n < 1 || n > picks.length) {
+    ui.alert('Enter a number from the list.');
+    return;
+  }
+
+  applyMoveToLogRows(result.mateRows, picks[n - 1]);
+  refreshCoverageFromLog();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Session moved on Schedule_Log.', 'Moved', 5);
+}
+
+function showSwapCandidatesForSelection() {
+  const ui = SpreadsheetApp.getUi();
+  const logRow = getSelectedLogRowFromSheet();
+  if (!logRow) {
+    ui.alert('Select a row on the Schedule_Log tab first.');
+    return;
+  }
+  if (String(logRow.locked).toLowerCase() === 'yes') {
+    ui.alert('Unlock this session before swapping.');
+    return;
+  }
+
+  const result = findSwapCandidatesForLogRow(logRow);
+  if (result.error) { ui.alert(result.error); return; }
+  if (!result.swaps.length) {
+    ui.alert('No valid swap partners found (need a mutual fit — same week scope, neither locked).');
+    return;
+  }
+
+  const list = result.swaps.slice(0, 12).map((s, i) =>
+    `${i + 1}. Swap with ${s.otherLabel} (${s.otherDay} ${minutesToTimeStr(s.otherStart)})`
+  ).join('\n');
+  ui.alert(`Swap options for selected session:\n\n${list}\n\nUse "Apply Swap for Selected Session" and enter the number.`);
+}
+
+function applySwapForSelectedSession() {
+  const ui = SpreadsheetApp.getUi();
+  const logRow = getSelectedLogRowFromSheet();
+  if (!logRow) {
+    ui.alert('Select a row on the Schedule_Log tab first.');
+    return;
+  }
+
+  const result = findSwapCandidatesForLogRow(logRow);
+  if (result.error) { ui.alert(result.error); return; }
+  const picks = result.swaps.slice(0, 12);
+  if (!picks.length) {
+    ui.alert('No valid swap partners found.');
+    return;
+  }
+
+  const list = picks.map((s, i) =>
+    `${i + 1}. ${s.otherLabel} (${s.otherDay} ${minutesToTimeStr(s.otherStart)})`
+  ).join('\n');
+  const resp = ui.prompt('Apply swap', `Pick a swap number:\n\n${list}`, ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const n = Number(String(resp.getResponseText()).trim());
+  if (!Number.isFinite(n) || n < 1 || n > picks.length) {
+    ui.alert('Enter a number from the list.');
+    return;
+  }
+
+  const swap = picks[n - 1];
+  const scheduleLog = loadScheduleLogObjects();
+  const otherRow = scheduleLog.find(r => r.sheetRow === swap.otherSheetRow);
+  if (!otherRow) { ui.alert('Could not find the other session row.'); return; }
+  const bMates = sessionMateRows(scheduleLog, otherRow);
+
+  applySwapOnLogRows(result.mateRows, bMates, swap);
+  refreshCoverageFromLog();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Sessions swapped on Schedule_Log.', 'Swapped', 5);
+}
+
+function addStudentToSelectedSession() {
+  const ui = SpreadsheetApp.getUi();
+  const logRow = getSelectedLogRowFromSheet();
+  if (!logRow) {
+    ui.alert('Select a row on the Schedule_Log tab first.');
+    return;
+  }
+
+  const resp = ui.prompt('Add student to session', 'Enter the Student ID to add:', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const studentId = String(resp.getResponseText()).trim();
+  if (!studentId) return;
+
+  const check = canAddStudentToSessionForLogRow(logRow, studentId);
+  if (!check.ok) {
+    ui.alert(check.error);
+    return;
+  }
+
+  appendStudentToSessionOnLog(logRow, check.student);
+  refreshCoverageFromLog();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + check.student.firstName + ' to the session.', 'Added', 5);
 }
 
 function showStudentSidebar() {
@@ -218,9 +300,15 @@ function submitStudentForm(data) {
 
   if (existingRowIdx >= 0) {
     sheet.getRange(existingRowIdx + 2, 1, 1, rowValues.length).setValues([rowValues]);
+    if (String(data.serviceType).toLowerCase() === 'group' && data.groupId) {
+      syncGroupIdOnScheduleLog(data.id, String(data.groupId).split(/[,;|/]+/)[0].trim());
+    }
     return 'Updated existing student: ' + data.firstName + ' ' + data.lastName;
   } else {
     sheet.appendRow(rowValues);
+    if (String(data.serviceType).toLowerCase() === 'group' && data.groupId) {
+      syncGroupIdOnScheduleLog(data.id, String(data.groupId).split(/[,;|/]+/)[0].trim());
+    }
     return 'Added new student: ' + data.firstName + ' ' + data.lastName;
   }
 }

@@ -17,7 +17,7 @@ The rest of this guide is the **Sheets** install and data model (the web app use
 1. Go to [sheets.google.com](https://sheets.google.com) and create a new blank spreadsheet. Name it something like "Caseload Scheduler."
 2. Extensions → Apps Script.
 3. Apps Script starts you with one file called `Code.gs`. Rename it: click the **⋮** menu next to it in the left sidebar → **Rename** → type `Constants` (the `.gs` is automatic). Delete its contents and paste in **apps-script/Constants.gs**.
-4. Click the **+** next to Files → Script, and repeat for each remaining `.gs` file in `apps-script/` (`Setup.gs`, `DataHelpers.gs`, `SchedulingEngine.gs`, `Outputs.gs`, `Interactive.gs`) — name each new file to match exactly, and paste in its contents. Apps Script treats every `.gs` file in a project as one shared global scope, so it doesn't matter which file a function lives in, or what order they're created in — this split is purely to keep the codebase navigable.
+4. Click the **+** next to Files → Script, and repeat for each remaining `.gs` file in `apps-script/` (`Setup.gs`, `DataHelpers.gs`, `SchedulingEngine.gs`, `Outputs.gs`, `SessionEditing.gs`, `Interactive.gs`) — name each new file to match exactly, and paste in its contents. Apps Script treats every `.gs` file in a project as one shared global scope, so it doesn't matter which file a function lives in, or what order they're created in — this split is purely to keep the codebase navigable.
 5. Click the **+** next to Files → HTML → name it exactly `StudentForm` → paste in **apps-script/StudentForm.html**.
 6. Save (Ctrl/Cmd+S). Close the Apps Script tab and go back to the Sheet.
 7. Reload the spreadsheet. A new **Caseload Scheduler** menu will appear (takes a few seconds — reload again if it's not there).
@@ -33,6 +33,7 @@ This creates 9 tabs. You'll fill in five of them (Students, Grades, Constraints,
 | `DataHelpers.gs` | Pure helpers + sheet readers - time/day parsing, loading each input tab into plain objects |
 | `SchedulingEngine.gs` | The actual algorithm - requirements, candidate slots, the main placement loop |
 | `Outputs.gs` | Everything that writes a result back: Schedule_Log, Schedule_Review, Open_Slots, Printable_Schedule |
+| `SessionEditing.gs` | Live coverage refresh, move/swap/add-student on Schedule_Log (web session-drawer parity) |
 | `Interactive.gs` | User-triggered actions outside Generate Schedule: the sidebar form, live validation, Show Alternatives |
 | `StudentForm.html` | The "Add / Edit Student" sidebar UI |
 | `apps-script/appsscript.json` | Standard Apps Script project manifest (only needed if you adopt `clasp` - see below) |
@@ -174,4 +175,4 @@ If you change placement behavior, update **both** `web/engine.js` and `apps-scri
 
 Google's [`clasp`](https://github.com/google/clasp) CLI syncs the Sheets project: `npm install -g @google/clasp`, `clasp login`, then from `apps-script/` run `clasp clone <scriptId>` or `clasp create`, then `clasp push` / `clasp pull`.
 
-Every function in every `.gs` file shares one global scope (that's how Apps Script works — no imports/exports needed between files), so the six-file split is purely organizational. Reading `apps-script/SchedulingEngine.gs` end to end is the fastest way to understand the algorithm; `web/engine.js` is the same logic for the browser.
+Every function in every `.gs` file shares one global scope (that's how Apps Script works — no imports/exports needed between files), so the file split is purely organizational. Reading `apps-script/SchedulingEngine.gs` end to end is the fastest way to understand the algorithm; `web/engine.js` is the same logic for the browser.
