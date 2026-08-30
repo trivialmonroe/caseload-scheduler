@@ -267,7 +267,8 @@ function writeVisualSchedule(showAllWeeks) {
 
   const sessions = logRows.map(r => ({
     grade: String(r[2]).trim(), groupId: r[3] ? String(r[3]).trim() : '', name: r[1],
-    weekLabel: String(r[4]).trim(), day: r[5], start: timeStrToMinutes(r[6]), end: timeStrToMinutes(r[7]),
+    weekLabel: normalizeWeekLabel(r[4]), day: normalizeScheduleDay(r[5]),
+    start: timeStrToMinutes(r[6]), end: timeStrToMinutes(r[7]),
     teacher: r[9] ? String(r[9]).trim() : ''
   }));
 

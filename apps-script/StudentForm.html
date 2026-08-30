@@ -9,7 +9,7 @@
     button { margin-top: 16px; width: 100%; padding: 8px; background: #4285f4; color: white; border: none; border-radius: 4px; cursor: pointer; }
     button:hover { background: #3367d6; }
     #status { margin-top: 10px; font-size: 12px; color: #188038; }
-    #groupIdRow, .weeklyOnly, .quarterlyOnly { display: none; }
+    #groupIdRow, .weeklyOnly, .quarterlyOnly, #otherServiceRow { display: none; }
     .hint { font-weight: normal; font-size: 11px; color: #666; margin-top: 2px; }
   </style>
 </head>
@@ -30,7 +30,13 @@
   <select id="serviceType" onchange="toggleGroup()">
     <option value="Individual">Individual</option>
     <option value="Group">Group</option>
+    <option value="Walk in">Walk in</option>
+    <option value="Other">Other (type below)</option>
   </select>
+  <div id="otherServiceRow" style="display:none">
+    <label>Other service type</label>
+    <input id="otherServiceType" placeholder="e.g., Consult, Screening">
+  </div>
 
   <div id="groupIdRow">
     <label>Group ID(s) — comma-separate if in more than one group</label>
@@ -98,10 +104,21 @@
 
   <script>
     function toggleGroup() {
-      const isGroup = document.getElementById('serviceType').value === 'Group';
+      const service = document.getElementById('serviceType').value;
+      const isGroup = service === 'Group';
       document.getElementById('groupIdRow').style.display = isGroup ? 'block' : 'none';
       document.getElementById('noGroupRow').style.display = isGroup ? 'none' : 'block';
+      document.getElementById('otherServiceRow').style.display = service === 'Other' ? 'block' : 'none';
       if (isGroup) document.getElementById('noGroup').checked = false;
+    }
+
+    function resolvedServiceType() {
+      const pick = document.getElementById('serviceType').value;
+      if (pick === 'Other') {
+        const custom = document.getElementById('otherServiceType').value.trim();
+        return custom || 'Other';
+      }
+      return pick;
     }
 
     function toggleFrequency() {
@@ -121,7 +138,7 @@
         firstName: document.getElementById('firstName').value.trim(),
         lastName: document.getElementById('lastName').value.trim(),
         grade: document.getElementById('grade').value.trim(),
-        serviceType: document.getElementById('serviceType').value,
+        serviceType: resolvedServiceType(),
         groupId: document.getElementById('groupId').value.trim(),
         noGroup: document.getElementById('serviceType').value === 'Individual' && document.getElementById('noGroup').checked,
         frequencyType: frequencyType,
@@ -141,12 +158,12 @@
         document.getElementById('status').innerText = 'Please fill in Student ID, name, and grade.';
         return;
       }
-      if (data.serviceType === 'Group' && !data.groupId) {
+      if (data.serviceType.toLowerCase() === 'group' && !data.groupId) {
         document.getElementById('status').style.color = '#d93025';
         document.getElementById('status').innerText = 'Group students need a Group ID.';
         return;
       }
-      if (data.serviceType === 'Group' && data.noGroup) {
+      if (data.serviceType.toLowerCase() === 'group' && data.noGroup) {
         document.getElementById('status').style.color = '#d93025';
         document.getElementById('status').innerText = 'No Group only applies to Individual students.';
         return;

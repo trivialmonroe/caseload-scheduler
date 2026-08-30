@@ -27,7 +27,14 @@ function onOpen() {
     .addItem('Validate Data', 'validateData')
     .addSeparator()
     .addItem('Generate Schedule', 'generateSchedule')
+    .addItem('Refresh Coverage from Schedule_Log', 'refreshCoverageFromLog')
+    .addSeparator()
     .addItem('Show Alternatives for Selected Row', 'showAlternativesForSelection')
+    .addItem('Move Selected Session to Alternative', 'moveSelectedSessionToAlternative')
+    .addItem('Show Swap Candidates for Selected Row', 'showSwapCandidatesForSelection')
+    .addItem('Apply Swap for Selected Session', 'applySwapForSelectedSession')
+    .addItem('Add Student to Selected Session', 'addStudentToSelectedSession')
+    .addSeparator()
     .addItem('Build Printable Schedule (2-Week View)', 'writeVisualSchedule')
     .addItem('Build Printable Schedule (All Weeks)', 'writeVisualScheduleAllWeeks')
     .addItem('Show Open Slots by Grade (diagnostic)', 'writeOpenSlotsGrid')
@@ -124,7 +131,9 @@ function applyStudentValidation(ss) {
   const studentsSheet = ss.getSheetByName(SHEET_NAMES.STUDENTS);
   const maxRows = 999;
 
-  const serviceRule = SpreadsheetApp.newDataValidation().requireValueInList(['Individual', 'Group'], true).setAllowInvalid(false).build();
+  const serviceRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Individual', 'Group', 'Walk in', 'Other'], true)
+    .setAllowInvalid(true).build();
   const freqRule = SpreadsheetApp.newDataValidation().requireValueInList(['Weekly', 'Quarterly'], true).setAllowInvalid(false).build();
   const statusRule = SpreadsheetApp.newDataValidation().requireValueInList(['Active', 'Inactive'], true).setAllowInvalid(false).build();
 
@@ -229,7 +238,9 @@ function buildReadMeSheet(ss) {
     '3. Fill in Students - one row per student. Use the sidebar form (Caseload Scheduler menu) or type directly into the sheet; dropdowns keep Service Type, Frequency Type, and Status typo-proof.',
     '4. Optionally fill in Constraints for anything specific to one student beyond their grade\'s schedule (e.g. existing OT/resource room times).',
     '5. Run Caseload Scheduler > Validate Data to catch mistakes before generating.',
-    '6. Run Caseload Scheduler > Generate Schedule. Check Schedule_Review for anything under its required minutes, and Printable_Schedule for the visual layout.'
+    '6. Run Caseload Scheduler > Generate Schedule. Check Schedule_Review for anything under its required minutes, and Printable_Schedule for the visual layout.',
+    '7. After manual edits on Schedule_Log, run Refresh Coverage from Schedule_Log to update minutes without regenerating.',
+    '8. Select a Schedule_Log row to move, swap, or add a student via the Caseload Scheduler menu (parity with the web session drawer).'
   ];
   steps.forEach(s => setBody(s));
   blank();
