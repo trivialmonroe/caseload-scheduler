@@ -244,6 +244,32 @@ function weeksForEntry(weekValue, settings) {
   return weekValue === ALL_WEEKS_KEY ? settings.weeksList : [weekValue];
 }
 
+/** Map quarter week 1/3/5/7/9 → 1 and 2/4/6/8 → 2 for the provider's A/B rotation. */
+function twoWeekCycleWeek(weekNum) {
+  return ((weekNum - 1) % 2) + 1;
+}
+
+/** Day/time already established for this reqId in the odd or even half of the 2-week cycle. */
+function establishedTwoWeekCycleSlot(reqId, cycleWeek, scheduled) {
+  const match = (scheduled || []).find(s =>
+    s.reqId === reqId &&
+    s.week !== ALL_WEEKS_KEY &&
+    twoWeekCycleWeek(s.week) === cycleWeek
+  );
+  return match ? { day: match.day, start: match.start } : null;
+}
+
+/** When consistent pattern is on, quarterly sessions must reuse their cycle's Week 1/2 template. */
+function filterCandidatesForTwoWeekCycle(candidates, session, scheduled, settings) {
+  if (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) return candidates;
+  const filtered = (candidates || []).filter(c => {
+    const template = establishedTwoWeekCycleSlot(session.reqId, twoWeekCycleWeek(c.week), scheduled);
+    if (!template) return true;
+    return c.day === template.day && c.start === template.start;
+  });
+  return filtered.length ? filtered : candidates;
+}
+
 function weekLabel(week) {
   return week === ALL_WEEKS_KEY ? 'Every Week' : 'Week ' + week;
 }
@@ -450,7 +476,8 @@ function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern
   });
   Object.values(byReqId).sort((a, b) => b.sessionLength - a.sessionLength).forEach(session => {
     const allCandidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, [], reqDaysUsed);
-    const earlyOnly = allCandidates.filter(c => c.week <= 2).sort((a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start);
+    const cycleFiltered = filterCandidatesForTwoWeekCycle(allCandidates, session, scheduled, settings);
+    const earlyOnly = cycleFiltered.filter(c => c.week <= 2).sort((a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start);
     if (earlyOnly.length) {
       const pick = earlyOnly[0];
       providerBookingsByWeek[pick.week][pick.day].push({ start: pick.start, end: pick.end });
@@ -604,12 +631,18 @@ function runSchedulingEngine(input) {
     const reqWeekLoad = (c) => session.week !== ANY_WEEK_KEY ? 0 : ((reqDaysUsed[session.reqId] && reqDaysUsed[session.reqId][String(c.week)]) || []).length;
     const isFirstOccurrence = !isReqIdRepresented(scheduled, session);
     const earlyStartBonus = (c) => (!settings.frontLoadFirstSessions || session.week !== ANY_WEEK_KEY || !isFirstOccurrence) ? 0 : ((c.week === ALL_WEEKS_KEY ? 0 : c.week) <= 2 ? 0 : 1);
-    const matchesEstablishedPattern = (c) => (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) ? 0 : (scheduled.some(s => s.reqId === session.reqId && s.day === c.day && s.start === c.start) ? 0 : 1);
+    bestCandidates = filterCandidatesForTwoWeekCycle(bestCandidates, session, scheduled, settings);
+    const matchesTwoWeekCyclePattern = (c) => {
+      if (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) return 0;
+      const template = establishedTwoWeekCycleSlot(session.reqId, twoWeekCycleWeek(c.week), scheduled);
+      if (template) return (c.day === template.day && c.start === template.start) ? 0 : 1;
+      return scheduled.some(s => s.reqId === session.reqId && s.day === c.day && s.start === c.start) ? 0 : 1;
+    };
     const dayLoad = (c) => weeksForEntry(c.week, settings).reduce((sum, w) => sum + ((providerBookingsByWeek[w][c.day] || []).length), 0);
     bestCandidates.sort((a, b) => {
       let d = reqWeekLoad(a) - reqWeekLoad(b); if (d) return d;
       d = earlyStartBonus(a) - earlyStartBonus(b); if (d) return d;
-      d = matchesEstablishedPattern(a) - matchesEstablishedPattern(b); if (d) return d;
+      d = matchesTwoWeekCyclePattern(a) - matchesTwoWeekCyclePattern(b); if (d) return d;
       d = dayLoad(a) - dayLoad(b); if (d) return d;
       const wa = a.week === ALL_WEEKS_KEY ? 0 : a.week, wb = b.week === ALL_WEEKS_KEY ? 0 : b.week;
       if (wa !== wb) return wa - wb;
@@ -1651,6 +1684,7 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeScheduleDay, loadLockedSessions,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
     sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, reviewFromScheduleLog,
-    scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
+    scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview,
+    twoWeekCycleWeek, establishedTwoWeekCycleSlot, filterCandidatesForTwoWeekCycle
   };
 }

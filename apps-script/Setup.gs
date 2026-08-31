@@ -278,7 +278,7 @@ function buildReadMeSheet(ss) {
   blank();
 
   setTitle('Consistent Weekly Pattern', 14);
-  setBody('Weekly students already land on the exact same day/time every single week, by construction - there\'s nothing to configure. Quarterly students are different: each of their sessions gets placed independently, so with "Prefer Consistent Weekly Pattern" ON (Settings tab, default Yes), once a Quarterly student\'s first session lands on, say, Tuesday at 9am, later sessions in other weeks will preferentially reuse that same day and time whenever it\'s available - so the provider, teachers, and the student settle into a predictable "always Tuesday" cadence instead of a different day/time every visit. Turn it off if you\'d rather the scheduler optimize purely for fitting everyone in, with no preference for repetition.');
+  setBody('Weekly students already land on the exact same day/time every single week, by construction - there\'s nothing to configure. Quarterly students are different: each of their sessions gets placed independently, so with "Prefer Consistent Weekly Pattern" ON (Settings tab, default Yes), once a Quarterly student\'s first session lands on, say, Tuesday at 9am in Week 1, every later Week 1/3/5/7/9 visit reuses that same slot, and Week 2/4/6/8 visits reuse whatever slot was established in Week 2 - so the provider\'s real 2-week A/B rotation repeats across the whole quarter instead of drifting week to week. Turn it off if you\'d rather the scheduler optimize purely for fitting everyone in, with no preference for repetition.');
   blank();
 
   setTitle('Front-Loading First Sessions', 14);
