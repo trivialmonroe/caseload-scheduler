@@ -303,6 +303,8 @@ const after = eng.reviewFromScheduleLog(Object.assign({}, extendInput, { schedul
 assert('Live review counts extended session minutes', after && after.scheduled === 45 && after.status === 'Met');
 const opts = eng.findSessionExtensionOptions(extendInput, extendRow);
 assert('Extension options include 45 min', opts.options && opts.options.some(o => o.duration === 45));
+assert('First extension step is +5 min', opts.options && opts.options[0].addMinutes === 5);
+assert('Extension steps are 5 minutes apart', opts.options && opts.options.every((o, i) => o.addMinutes === 5 * (i + 1)));
 
 console.log('\n=== Locked blank week ===');
 

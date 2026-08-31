@@ -777,8 +777,25 @@ function applySessionExtension(newDurationMinutes) {
     r.end = endStr;
     r.duration = Number(newDurationMinutes);
   });
-  refreshLiveReview('Session extended to ' + newDurationMinutes + ' min — coverage updated.');
+  const added = Number(newDurationMinutes) - (check.currentDuration || 0);
+  refreshLiveReview('Session extended by ' + added + ' min (now ' + newDurationMinutes + ' min) — coverage updated.');
   render();
+}
+
+function applySessionExtensionDelta(addMinutes) {
+  if (altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const delta = Number(addMinutes);
+  if (!Number.isFinite(delta) || delta < 5 || delta % 5 !== 0) {
+    setStatus('Enter minutes to add in 5-minute steps (5, 10, 15, …).', 'bad');
+    return;
+  }
+  let currentDur;
+  try { currentDur = timeStrToMinutes(row.end) - timeStrToMinutes(row.start); } catch (e) {
+    setStatus('Bad session time.', 'bad');
+    return;
+  }
+  applySessionExtension(currentDur + delta);
 }
 
 function loadSampleAndGenerate() {
@@ -1151,7 +1168,7 @@ function sessionPopoverHtml() {
   }
   html += `</div></details>
     <details class="drawer-sec" open><summary>Extend session</summary>
-      <p class="meta">Add minutes when coverage is under. Validates availability, blackouts, and updates placed minutes for every member.</p>
+      <p class="meta">Add time in 5-minute steps when coverage is under. Start with +5 min — validates availability and blackouts for every member.</p>
       <div class="chip-row">`;
   if (locked) {
     html += '<span class="meta">Unlock to extend this session.</span>';
@@ -1161,17 +1178,18 @@ function sessionPopoverHtml() {
     html += '<span class="meta">No room to extend (max length, availability, or a conflict).</span>';
   } else {
     extendOpts.options.forEach(o => {
-      html += `<button type="button" class="chip" onclick="applySessionExtension(${o.duration})" title="${esc(extensionImpactHtml(o.impacts).replace(/<[^>]+>/g, ' '))}">${o.duration} min · ends ${esc(o.end)}</button>`;
+      html += `<button type="button" class="chip" onclick="applySessionExtension(${o.duration})" title="${esc(extensionImpactHtml(o.impacts).replace(/<[^>]+>/g, ' '))}">+${o.addMinutes} min <span class="meta">(${o.duration} total · ends ${esc(o.end)})</span></button>`;
     });
   }
   html += `</div>`;
   if (!locked && (extendOpts.options || []).length) {
     const next = extendOpts.options[0];
-    html += `<p class="meta">Next step (+${next.duration - extendOpts.currentDuration} min):</p>${extensionImpactHtml(next.impacts)}`;
-    html += `<div class="add-row" style="margin-top:8px">
-      <input type="number" id="extend-minutes" min="${extendOpts.currentDuration + extendOpts.increment}" max="${state.settings.maxSessionLength || 60}" step="${extendOpts.increment}" placeholder="${extendOpts.currentDuration + extendOpts.increment}">
-      <button type="button" onclick="applySessionExtension(Number(document.getElementById('extend-minutes').value))">Apply length</button>
-    </div>`;
+    html += `<p class="meta">+${next.addMinutes} min preview:</p>${extensionImpactHtml(next.impacts)}`;
+    html += `<div class="field" style="margin-top:8px"><label>Add minutes (5-min steps)</label>
+      <div class="add-row">
+      <input type="number" id="extend-add-minutes" min="5" max="${(state.settings.maxSessionLength || 60) - extendOpts.currentDuration}" step="5" placeholder="5">
+      <button type="button" onclick="applySessionExtensionDelta(Number(document.getElementById('extend-add-minutes').value))">Add</button>
+      </div></div>`;
   }
   html += `</details>
     <div class="card-actions">
