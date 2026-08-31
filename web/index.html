@@ -397,22 +397,72 @@
     .print-panel label.chk { font-weight: 500; display: flex; gap: 8px; align-items: center; margin: 0; }
     .print-panel input[type="checkbox"] { width: auto; }
     .sess .sess-sub { display: block; opacity: .9; font-size: 10px; }
+    .print-week-pages { display: none; }
+    .print-week-header { display: none; }
     @media print {
-      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .session-drawer, .print-panel { display: none !important; }
-      body { display: block; background: #fff; }
-      main { padding: 0; }
-      .week-cals { gap: 24px; }
-      .card.cal { break-inside: avoid; box-shadow: none; }
+      @page { size: landscape; margin: 0.35in 0.45in; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      aside, .top, .no-print, .mob-nav, .tabs, .wizard, .stale, .popover, .session-drawer, .print-panel,
+      .coverage-banner, .dnd-hint, .cal-legend { display: none !important; }
+      body, html { background: #fff !important; height: auto !important; }
+      body { display: block !important; }
+      main { padding: 0 !important; max-width: none !important; overflow: visible !important; }
       body.print-week h1,
       body.print-week .lede,
       body.print-week .stat-grid,
-      body.print-week .row { display: none !important; }
+      body.print-week .row,
+      body.print-week .week-main > .week-cals { display: none !important; }
+      body.print-week .print-week-pages { display: block !important; }
       body.print-week .print-only { display: block !important; }
       body.print-hide-times .sess-time { display: none !important; }
       body.print-hide-teachers .sess-teacher { display: none !important; }
       body.print-hide-groups .sess-group { display: none !important; }
-      body.print-compact .cal-grid > div { min-height: 22px; padding: 1px; }
-      body.print-compact .sess { font-size: 10px; padding: 2px 4px; }
+      .print-week-page {
+        page-break-after: always;
+        break-after: page;
+        display: block;
+        box-sizing: border-box;
+        padding: 0;
+      }
+      .print-week-page:last-child { page-break-after: auto; break-after: auto; }
+      .print-week-header {
+        display: block !important;
+        margin: 0 0 8px;
+        padding-bottom: 6px;
+        border-bottom: 2px solid var(--accent);
+      }
+      .print-week-title { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: -.02em; }
+      .print-week-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+      .print-grade-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .print-legend-pill {
+        font-size: 9px; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+        border: 1px solid rgba(0,0,0,.08);
+      }
+      .print-cal.card { border: none; box-shadow: none; padding: 0; margin: 0; overflow: visible; background: transparent; }
+      .print-cal .cal-grid {
+        min-width: 0; width: 100%; border: 1px solid #b8c9c2; border-radius: 6px;
+        overflow: hidden;
+      }
+      .print-cal .cal-head { padding: 6px !important; font-size: 11px; }
+      .print-cal .cal-grid > div { min-height: 16px; padding: 1px 2px; font-size: 9px; color: #666; }
+      .print-cal .cal-slot { min-height: 16px; background: #fafcfb; }
+      .print-cal .sess {
+        font-size: 9px; padding: 2px 4px; line-height: 1.2; border-radius: 4px;
+        box-shadow: none; cursor: default;
+      }
+      .print-cal .sess .sess-sub { font-size: 8px; opacity: .95; }
+      .print-cal .sess-badge { display: none !important; }
+      .print-cal .cal-slot.drop-ok,
+      .print-cal .cal-slot.swap-ok,
+      .print-cal .cal-slot.drop-hover {
+        background: #fafcfb !important; box-shadow: none !important; outline: none !important;
+      }
+      body.print-compact .print-cal .cal-grid > div { min-height: 12px; font-size: 8px; }
+      body.print-compact .print-cal .cal-slot { min-height: 12px; }
+      body.print-compact .print-cal .sess { font-size: 8px; padding: 1px 3px; }
+      body.print-compact .print-cal .sess .sess-sub { font-size: 7px; }
+      .print-only.card { box-shadow: none; border: 1px solid var(--line); page-break-before: always; break-before: page; margin-top: 0; }
+      .print-only.card h3 { margin-top: 0; }
     }
     .print-only { display: none; }
     @media (max-width: 980px) {
@@ -485,11 +535,11 @@ let dragState = null; // { index, keys: {'Mon|480': true}, weekLabel }
 let suppressSessionClick = false;
 let printOpts = {
   teachers: true,
-  groups: true,
+  groups: false,
   times: true,
   grades: true,
   coverage: false,
-  compact: false,
+  compact: true,
   allWeeks: false,
 };
 
@@ -1080,6 +1130,58 @@ function formatSessionCell(entry, opts) {
   return esc(names) + (sub.length ? '<span class="sess-sub">' + sub.join(' · ') + '</span>' : '');
 }
 
+/** Trim empty hours so a printed week fits on one landscape page. */
+function weekPrintBounds(cal, weekLabel) {
+  const inc = cal.inc;
+  let minStart = Infinity, maxEnd = -Infinity;
+  cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
+    minStart = Math.min(minStart, e.start);
+    maxEnd = Math.max(maxEnd, e.end);
+  });
+  if (!isFinite(minStart)) {
+    return { minStart: cal.minStart, maxEnd: cal.maxEnd, rowsCount: cal.rowsCount, inc: cal.inc };
+  }
+  minStart = Math.max(cal.minStart, Math.floor((minStart - 15) / inc) * inc);
+  maxEnd = Math.min(cal.maxEnd, Math.ceil((maxEnd + 15) / inc) * inc);
+  if (maxEnd <= minStart) maxEnd = minStart + inc;
+  const rowsCount = Math.max(1, Math.ceil((maxEnd - minStart) / inc));
+  return { minStart, maxEnd, rowsCount, inc };
+}
+
+function weeksForPrintLayout(cal) {
+  if (!cal.hasSpecificWeeks) return [1];
+  if (printOpts.allWeeks) return cal.settings.weeksList.slice();
+  return cal.settings.weeksList.slice(0, 2);
+}
+
+function printWeekHeaderHtml(cal, week) {
+  const label = cal.hasSpecificWeeks ? ('Week ' + week) : 'Weekly schedule';
+  const pattern = cal.hasSpecificWeeks ? (' · Pattern ' + getWeekPattern(week, cal.settings)) : '';
+  const generated = state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleDateString() : '';
+  let legend = '';
+  if (printOpts.grades) {
+    legend = '<div class="print-grade-legend">' + cal.distinctGrades.map(g =>
+      `<span class="print-legend-pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`
+    ).join('') + '</div>';
+  }
+  return `<div class="print-week-header">
+    <div class="print-week-title">${esc(label)}${esc(pattern)}</div>
+    <div class="print-week-meta">Caseload Schedule${generated ? ' · Generated ' + esc(generated) : ''}</div>
+    ${legend}
+  </div>`;
+}
+
+function renderPrintWeekPages(cal) {
+  let html = '<div class="week-cals print-week-pages">';
+  weeksForPrintLayout(cal).forEach(week => {
+    html += '<div class="print-week-page">';
+    html += printWeekHeaderHtml(cal, week);
+    html += '<div class="card cal print-cal">' + renderWeekGrid(cal, week, { forPrint: true }) + '</div>';
+    html += '</div>';
+  });
+  return html + '</div>';
+}
+
 function renderSchedule() {
   const tabs = [['week','Week'],['coverage','Coverage'],['sessions','Sessions'],['open','Open slots']];
   let html = `<h1>Schedule</h1>
@@ -1272,16 +1374,16 @@ function printOptionsHtml() {
   const chk = (key, label) =>
     `<label class="chk"><input type="checkbox" ${o[key] ? 'checked' : ''} onchange="printOpts.${key}=this.checked"> ${label}</label>`;
   return `<div class="card print-panel no-print">
-    <h3>Print options</h3>
-    <p class="meta">Choose what appears on the printed week calendars, then print.</p>
+    <h3>Print schedule</h3>
+    <p class="meta">Each week prints on its own landscape page with grade colors (like the calendar). Hours are trimmed to your sessions so the week fits one page.</p>
     <div class="check-grid">
       ${chk('times', 'Session times')}
       ${chk('teachers', 'Teachers / rooms')}
       ${chk('groups', 'Group IDs')}
       ${chk('grades', 'Grade color legend')}
-      ${chk('coverage', 'Coverage summary')}
-      ${chk('compact', 'Compact rows')}
-      ${chk('allWeeks', 'All quarter weeks (not just 2-week snapshot)')}
+      ${chk('coverage', 'Coverage summary (last page)')}
+      ${chk('compact', 'Compact text (recommended)')}
+      ${chk('allWeeks', 'All quarter weeks (default: first 2 weeks)')}
     </div>
     <div class="card-actions">
       <button type="button" class="primary" onclick="runPrint()">Print</button>
@@ -1364,12 +1466,13 @@ function renderWeekBody() {
       <span class="leg">🔒 Locked · <span class="sess-badge auto">Auto</span> Auto-grouped</span>
     </div>
     ${printOptionsHtml()}
-    <div class="row ${printOpts.grades ? '' : 'no-print'}">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
+    <div class="row no-print">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
   if (printOpts.coverage) {
     html += `<div class="print-only card"><h3>Coverage</h3><table><thead><tr><th>Student</th><th>Required</th><th>Placed</th><th>Status</th></tr></thead><tbody>` +
       rev.map(r => `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${esc(r.status)}</td></tr>`).join('') +
       `</tbody></table></div>`;
   }
+  html += renderPrintWeekPages(cal);
   html += `<div class="week-layout${altFor != null ? ' drawer-open' : ''}"><div class="week-main">`;
   html += '<div class="week-cals">';
   cal.weekPairs.forEach(pair => {
@@ -1382,9 +1485,12 @@ function renderWeekBody() {
   return html;
 }
 
-function renderWeekGrid(cal, week) {
+function renderWeekGrid(cal, week, opts) {
+  opts = opts || {};
+  const forPrint = !!opts.forPrint;
   const weekLabel = cal.hasSpecificWeeks ? ('Week ' + week) : 'Every Week';
-  const inc = cal.inc, start = cal.minStart, rows = cal.rowsCount;
+  const bounds = forPrint ? weekPrintBounds(cal, weekLabel) : { minStart: cal.minStart, maxEnd: cal.maxEnd, rowsCount: cal.rowsCount, inc: cal.inc };
+  const inc = bounds.inc, start = bounds.minStart, rows = bounds.rowsCount;
   const cells = {};
   DAYS.forEach(d => { cells[d] = Array.from({ length: rows }, () => null); });
   cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
@@ -1399,7 +1505,7 @@ function renderWeekGrid(cal, week) {
     };
     for (let r = r0 + 1; r < r1; r++) if (cells[e.day]) cells[e.day][r] = 'skip';
   });
-  let html = '<div class="cal-grid' + (compactCalendar ? ' compact-cal' : '') + '" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
+  let html = '<div class="cal-grid' + (compactCalendar && !forPrint ? ' compact-cal' : '') + (forPrint ? ' print-grid' : '') + '" data-week-label="' + esc(weekLabel) + '" data-inc="' + inc + '">';
   html += '<div class="cal-head">Time</div>' + DAYS.map(d => '<div class="cal-head">' + d + '</div>').join('');
   for (let r = 0; r < rows; r++) {
     const slotStart = start + r * inc;
@@ -1409,9 +1515,15 @@ function renderWeekGrid(cal, week) {
       if (c === 'skip') return;
       const spanMins = c ? c.span * inc : inc;
       const cellStart = c ? c.start : slotStart;
-      const ok = dragState && candidateForSlot(d, cellStart, weekLabel, spanMins) ? ' drop-ok' : '';
+      const ok = !forPrint && dragState && candidateForSlot(d, cellStart, weekLabel, spanMins) ? ' drop-ok' : '';
       if (!c) {
         html += `<div class="cal-slot${ok}" data-day="${d}" data-start="${slotStart}" data-span="${inc}" data-week="${esc(weekLabel)}"></div>`;
+        return;
+      }
+      if (forPrint) {
+        html += `<div class="cal-slot" style="grid-row: span ${c.span}" data-day="${d}" data-start="${c.start}" data-span="${spanMins}">
+          <div class="sess" style="background:${c.color.bg};color:${c.color.text}">${c.text}</div>
+        </div>`;
         return;
       }
       const logIdx = findLogIndexForCalendarSlot(state.scheduleLog, c.day, c.start, c.studentId, weekLabel);
@@ -2255,7 +2367,7 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('afterprint', () => {
   if (!document.body.classList.contains('print-week')) return;
-  document.body.classList.remove('print-week');
+  document.body.classList.remove('print-week', 'print-hide-times', 'print-hide-teachers', 'print-hide-groups', 'print-compact');
   render();
 });
 
