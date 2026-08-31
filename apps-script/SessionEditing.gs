@@ -43,32 +43,53 @@ function getSelectedLogRowFromSheet() {
   return logObjectFromSheetRow(vals, row);
 }
 
-function sessionKeyFromLogRow(r) {
+function sessionSlotKey(r) {
   return [
     normalizeWeekLabel(r.week),
     normalizeScheduleDay(r.day),
     String(r.start || '').trim(),
-    String(r.end || '').trim(),
-    String(r.groupId || '').trim()
+    String(r.end || '').trim()
   ].join('|');
 }
 
-function sessionMateRows(scheduleLog, logRow) {
-  const key = sessionKeyFromLogRow(logRow);
-  const gid = String(logRow.groupId || '').trim();
-  const week = normalizeWeekLabel(logRow.week);
-  const day = normalizeScheduleDay(logRow.day);
-  const start = String(logRow.start || '').trim();
-  const end = String(logRow.end || '').trim();
-  return (scheduleLog || []).filter(r => {
-    if (sessionKeyFromLogRow(r) === key) return true;
-    if (!gid) return false;
-    return String(r.groupId || '').trim() === gid
-      && normalizeWeekLabel(r.week) === week
-      && normalizeScheduleDay(r.day) === day
-      && String(r.start || '').trim() === start
-      && String(r.end || '').trim() === end;
+function canonicalGroupIdForSlot(rows, students) {
+  const studentsById = {};
+  (students || []).forEach(s => { studentsById[s.id] = s; });
+  const scores = {};
+  (rows || []).forEach(r => {
+    const gid = String(r.groupId || '').trim();
+    if (gid) scores[gid] = (scores[gid] || 0) + 1;
+    const s = studentsById[String(r.studentId).trim()];
+    if (!s) return;
+    const gids = parseGroupIds(s.groupIds && s.groupIds.length ? s.groupIds : s.groupId);
+    gids.forEach(g => {
+      scores[g] = (scores[g] || 0) + 0.5;
+      if (gids.length === 1) scores[g] += 1;
+    });
   });
+  const ranked = Object.keys(scores).sort((a, b) => scores[b] - scores[a]);
+  return ranked[0] || String((rows[0] && rows[0].groupId) || '').trim();
+}
+
+function unifySessionGroupIds(scheduleLog, logRow, groupId) {
+  const gid = String(groupId || '').trim();
+  if (!gid) return;
+  const slot = sessionSlotKey(logRow);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.LOG);
+  (scheduleLog || []).forEach(r => {
+    if (sessionSlotKey(r) !== slot) return;
+    r.groupId = gid;
+    if (r.sheetRow && sheet) sheet.getRange(r.sheetRow, 4).setValue(gid);
+  });
+}
+
+function sessionKeyFromLogRow(r) {
+  return sessionSlotKey(r);
+}
+
+function sessionMateRows(scheduleLog, logRow) {
+  const slot = sessionSlotKey(logRow);
+  return (scheduleLog || []).filter(r => sessionSlotKey(r) === slot);
 }
 
 function scheduledEntriesFromLog(scheduleLog, students) {
@@ -462,9 +483,11 @@ function canAddStudentToSessionForLogRow(logRow, studentId) {
   if ((blackouts[day] || []).some(b => overlaps(start, end, b.start, b.end))) {
     return { ok: false, error: 'Conflicts with a grade or student blackout.' };
   }
+  const hostSlot = sessionSlotKey(logRow);
   const weekText = normalizeWeekLabel(logRow.week);
   const busy = scheduleLog.some(r => {
     if (String(r.studentId) !== String(studentId)) return false;
+    if (sessionSlotKey(r) === hostSlot) return false;
     if (normalizeScheduleDay(r.day) !== day) return false;
     const rWeek = normalizeWeekLabel(r.week);
     const sameWeek = rWeek === weekText || rWeek === 'Every Week' || weekText === 'Every Week';
@@ -531,17 +554,19 @@ function appendStudentToSessionOnLog(logRow, student) {
     student.teacher || '',
     logRow.locked || ''
   ]);
+  const log = loadScheduleLogObjects();
+  unifySessionGroupIds(log, logRow, gid);
 }
 
-function syncGroupIdOnScheduleLog(studentId, groupId) {
-  if (!groupId) return;
+function syncGroupIdOnScheduleLog(studentId, groupIds) {
+  const gids = parseGroupIds(groupIds);
+  if (!gids.length) return;
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.LOG);
   if (!sheet || sheet.getLastRow() < 2) return;
   const numRows = sheet.getLastRow() - 1;
   const data = sheet.getRange(2, 1, numRows, 11).getValues();
   data.forEach((vals, i) => {
-    if (String(vals[0]).trim() === String(studentId).trim()) {
-      sheet.getRange(i + 2, 4).setValue(groupId);
-    }
+    if (String(vals[0]).trim() !== String(studentId).trim()) return;
+    if (!String(vals[3] || '').trim()) sheet.getRange(i + 2, 4).setValue(gids[0]);
   });
 }

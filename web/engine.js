@@ -753,17 +753,17 @@ function canAddStudentToSession(input, logRow, studentId) {
     return { ok: false, error: 'Bad session time.' };
   }
   const blackouts = getStudentBlackouts(student, loadGradeBlackouts(input.grades), loadStudentConstraints(input.constraints));
-  if ((blackouts[logRow.day] || []).some(b => overlaps(start, end, b.start, b.end))) {
+  const day = normalizeScheduleDay(logRow.day);
+  if ((blackouts[day] || []).some(b => overlaps(start, end, b.start, b.end))) {
     return { ok: false, error: 'Conflicts with a grade or student blackout.' };
   }
-  const weekText = String(logRow.week || '').trim();
-  const weeksHit = (weekText === 'Every Week' || !weekText)
-    ? buildSettings(input.settings).weeksList
-    : [Number(String(weekText).replace(/[^0-9]/g, '')) || 1];
+  const hostSlot = sessionSlotKey(logRow);
+  const weekText = normalizeWeekLabel(logRow.week);
   const busy = (input.scheduleLog || []).some(r => {
     if (String(r.studentId) !== String(studentId)) return false;
-    if (String(r.day) !== String(logRow.day)) return false;
-    const rWeek = String(r.week || '').trim();
+    if (sessionSlotKey(r) === hostSlot) return false;
+    if (normalizeScheduleDay(r.day) !== day) return false;
+    const rWeek = normalizeWeekLabel(r.week);
     const sameWeek = rWeek === weekText || rWeek === 'Every Week' || weekText === 'Every Week';
     if (!sameWeek) return false;
     try {
@@ -878,32 +878,56 @@ function computeOpenSlots(input) {
   return { blocks, grades, hasAlternating, minStart, maxEnd };
 }
 
-function sessionKeyFromLogRow(r) {
+function sessionSlotKey(r) {
   return [
     normalizeWeekLabel(r.week),
     normalizeScheduleDay(r.day),
     String(r.start || '').trim(),
-    String(r.end || '').trim(),
-    String(r.groupId || '').trim()
+    String(r.end || '').trim()
   ].join('|');
 }
 
-function sessionMateRows(scheduleLog, logRow) {
-  const key = sessionKeyFromLogRow(logRow);
-  const gid = String(logRow.groupId || '').trim();
-  const week = normalizeWeekLabel(logRow.week);
-  const day = normalizeScheduleDay(logRow.day);
-  const start = String(logRow.start || '').trim();
-  const end = String(logRow.end || '').trim();
-  return (scheduleLog || []).filter(r => {
-    if (sessionKeyFromLogRow(r) === key) return true;
-    if (!gid) return false;
-    return String(r.groupId || '').trim() === gid
-      && normalizeWeekLabel(r.week) === week
-      && normalizeScheduleDay(r.day) === day
-      && String(r.start || '').trim() === start
-      && String(r.end || '').trim() === end;
+/** Pick the group label that best fits everyone sharing a time slot. */
+function canonicalGroupIdForSlot(rows, students) {
+  const studentsById = {};
+  (students || []).forEach(s => { studentsById[s.id] = s; });
+  const scores = {};
+  (rows || []).forEach(r => {
+    const gid = String(r.groupId || '').trim();
+    if (gid) scores[gid] = (scores[gid] || 0) + 1;
+    const s = studentsById[String(r.studentId).trim()];
+    if (!s) return;
+    const gids = parseGroupIds(s.groupIds && s.groupIds.length ? s.groupIds : s.groupId);
+    gids.forEach(g => {
+      scores[g] = (scores[g] || 0) + 0.5;
+      if (gids.length === 1) scores[g] += 1;
+    });
   });
+  const ranked = Object.keys(scores).sort((a, b) => scores[b] - scores[a]);
+  return ranked[0] || String((rows[0] && rows[0].groupId) || '').trim();
+}
+
+function unifySessionGroupIds(scheduleLog, logRow, groupId) {
+  const gid = String(groupId || '').trim();
+  if (!gid) return false;
+  const slot = sessionSlotKey(logRow);
+  let changed = false;
+  (scheduleLog || []).forEach(r => {
+    if (sessionSlotKey(r) === slot && String(r.groupId || '').trim() !== gid) {
+      r.groupId = gid;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function sessionKeyFromLogRow(r) {
+  return sessionSlotKey(r);
+}
+
+function sessionMateRows(scheduleLog, logRow) {
+  const slot = sessionSlotKey(logRow);
+  return (scheduleLog || []).filter(r => sessionSlotKey(r) === slot);
 }
 
 function findAlternativeSlots(input, logRow) {
@@ -1218,11 +1242,17 @@ function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   const entryMap = {};
   sessions.forEach(s => {
     if (!s.day || !DAYS.includes(s.day)) return;
-    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end + '|' + (s.groupId || s.name);
-    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, groupId: s.groupId || '', names: [], teachers: [], studentIds: [] };
+    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end;
+    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, groupId: s.groupId || '', names: [], teachers: [], studentIds: [], groupIds: [] };
     entryMap[key].names.push(s.name);
     entryMap[key].studentIds.push(s.studentId);
+    if (s.groupId && entryMap[key].groupIds.indexOf(s.groupId) === -1) entryMap[key].groupIds.push(s.groupId);
     if (s.teacher && entryMap[key].teachers.indexOf(s.teacher) === -1) entryMap[key].teachers.push(s.teacher);
+  });
+  Object.keys(entryMap).forEach(k => {
+    const e = entryMap[k];
+    e.groupId = e.groupIds.length === 1 ? e.groupIds[0] : (e.groupIds[0] || '');
+    delete e.groupIds;
   });
   const entries = Object.values(entryMap);
   const distinctGrades = Array.from(new Set(entries.map(e => e.grade))).sort((a, b) => gradeSortValue(a) - gradeSortValue(b));
@@ -1620,7 +1650,7 @@ if (typeof module !== 'undefined' && module.exports) {
     mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow, normalizeWeekLabel,
     normalizeScheduleDay, loadLockedSessions,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
-    sessionMateRows, sessionKeyFromLogRow, reviewFromScheduleLog,
+    sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
   };
 }

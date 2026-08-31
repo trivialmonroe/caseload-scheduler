@@ -1033,6 +1033,7 @@ function renderSchedule() {
 function sessionPopoverHtml() {
   if (altFor == null || !state.scheduleLog[altFor]) return '';
   const row = state.scheduleLog[altFor];
+  reconcileSessionSlot(row);
   const locked = String(row.locked).toLowerCase() === 'yes';
   const autoGroup = String(row.groupId || '').indexOf('AUTO-GROUP-') === 0;
   const mates = sessionMateRows(state.scheduleLog, row);
@@ -1109,6 +1110,13 @@ function sessionPopoverHtml() {
   return html;
 }
 
+function reconcileSessionSlot(logRow) {
+  if (!logRow || !(state.scheduleLog || []).length) return;
+  const mates = sessionMateRows(state.scheduleLog, logRow);
+  const gid = canonicalGroupIdForSlot(mates, state.students);
+  if (gid && unifySessionGroupIds(state.scheduleLog, logRow, gid)) persist();
+}
+
 function addToSession() {
   const sel = document.getElementById('add-member');
   const studentId = sel && sel.value;
@@ -1137,6 +1145,7 @@ function addToSession() {
     teacher: s.teacher || '',
     locked: row.locked || ''
   });
+  unifySessionGroupIds(state.scheduleLog, row, gid);
   // Keep altFor on the original row index (still valid)
   refreshLiveReview('Added ' + s.firstName + ' to the session.');
   render();
@@ -1149,22 +1158,13 @@ function removeFromSession(studentId) {
   if (mates.length <= 1) { setStatus('Cannot remove the only member.', 'bad'); return; }
   beginEdit('Remove member');
   const idx = state.scheduleLog.findIndex(r =>
-    String(r.studentId) === String(studentId)
-    && String(r.week) === String(row.week)
-    && String(r.day) === String(row.day)
-    && String(r.start) === String(row.start)
-    && String(r.groupId || '') === String(row.groupId || '')
+    String(r.studentId) === String(studentId) && sessionSlotKey(r) === sessionSlotKey(row)
   );
   if (idx < 0) return;
   const name = state.scheduleLog[idx].name;
   state.scheduleLog.splice(idx, 1);
   if (altFor === idx) {
-    const next = state.scheduleLog.findIndex(r =>
-      String(r.week) === String(row.week)
-      && String(r.day) === String(row.day)
-      && String(r.start) === String(row.start)
-      && String(r.groupId || '') === String(row.groupId || '')
-    );
+    const next = state.scheduleLog.findIndex(r => sessionSlotKey(r) === sessionSlotKey(row));
     altFor = next >= 0 ? next : null;
   } else if (altFor > idx) {
     altFor -= 1;
@@ -1226,6 +1226,20 @@ function runPrint() {
 
 function printWeek() { openPrintOptions(); }
 
+function reconcileAllSessionSlots() {
+  const seen = {};
+  let changed = false;
+  (state.scheduleLog || []).forEach(r => {
+    const k = sessionSlotKey(r);
+    if (seen[k]) return;
+    seen[k] = true;
+    const mates = sessionMateRows(state.scheduleLog, r);
+    const gid = canonicalGroupIdForSlot(mates, state.students);
+    if (gid && unifySessionGroupIds(state.scheduleLog, r, gid)) changed = true;
+  });
+  if (changed) persist();
+}
+
 function renderWeekBody() {
   const log = state.scheduleLog || [];
   const rev = reviewRows();
@@ -1237,6 +1251,7 @@ function renderWeekBody() {
         <button onclick="pickFile()">Open JSON / CSV</button>
       </div>`;
   }
+  reconcileAllSessionSlots();
   const cal = buildCalendarModel(log, state.settings, showAllWeeks, state.availability);
   let html = `<p class="lede">${esc(state.lastRun && state.lastRun.at ? new Date(state.lastRun.at).toLocaleString() : '')} · ${log.length} placed rows · ${met}/${rev.length || '—'} students covered.</p>
     <p class="dnd-hint no-print"><b>Live schedule:</b> drag a group onto a green cell to move it, or onto an amber-outlined session to <b>swap</b> places. Click a block to lock, edit members, or pick a move/swap. Coverage is a report tab — edits happen on this calendar.</p>
@@ -1935,9 +1950,11 @@ function openStudentForm(idx) {
       state.students[idx] = next;
       if (oldId !== next.id) state.constraints.forEach(c => { if (c.studentId === oldId) c.studentId = next.id; });
     }
-    if (next.serviceType === 'Group' && next.groupId) {
+    if (next.serviceType === 'Group' && next.groupIds && next.groupIds.length) {
       (state.scheduleLog || []).forEach(r => {
-        if (String(r.studentId) === String(next.id)) r.groupId = next.groupId;
+        if (String(r.studentId) !== String(next.id)) return;
+        const gid = String(r.groupId || '').trim();
+        if (!gid) r.groupId = next.groupIds[0];
       });
     }
     persistCaseload();

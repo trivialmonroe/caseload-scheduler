@@ -301,13 +301,13 @@ function submitStudentForm(data) {
   if (existingRowIdx >= 0) {
     sheet.getRange(existingRowIdx + 2, 1, 1, rowValues.length).setValues([rowValues]);
     if (String(data.serviceType).toLowerCase() === 'group' && data.groupId) {
-      syncGroupIdOnScheduleLog(data.id, String(data.groupId).split(/[,;|/]+/)[0].trim());
+      syncGroupIdOnScheduleLog(data.id, data.groupId);
     }
     return 'Updated existing student: ' + data.firstName + ' ' + data.lastName;
   } else {
     sheet.appendRow(rowValues);
     if (String(data.serviceType).toLowerCase() === 'group' && data.groupId) {
-      syncGroupIdOnScheduleLog(data.id, String(data.groupId).split(/[,;|/]+/)[0].trim());
+      syncGroupIdOnScheduleLog(data.id, data.groupId);
     }
     return 'Added new student: ' + data.firstName + ' ' + data.lastName;
   }

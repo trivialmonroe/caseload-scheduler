@@ -275,12 +275,17 @@ function writeVisualSchedule(showAllWeeks) {
   // Collapse individual student rows that share one session (same week/day/time/group) into a single block.
   const entryMap = {};
   sessions.forEach(s => {
-    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end + '|' + (s.groupId || s.name);
-    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, names: [], teachers: [] };
+    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end;
+    if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, names: [], teachers: [], groupIds: [] };
     entryMap[key].names.push(s.name);
+    if (s.groupId && entryMap[key].groupIds.indexOf(s.groupId) === -1) entryMap[key].groupIds.push(s.groupId);
     if (s.teacher && entryMap[key].teachers.indexOf(s.teacher) === -1) entryMap[key].teachers.push(s.teacher);
   });
-  const entries = Object.values(entryMap);
+  const entries = Object.values(entryMap).map(e => {
+    e.groupId = e.groupIds.length === 1 ? e.groupIds[0] : (e.groupIds[0] || '');
+    delete e.groupIds;
+    return e;
+  });
 
   // Assign each grade a stable color, ordered by grade so it's the same every time this is rebuilt.
   const distinctGrades = Array.from(new Set(entries.map(e => e.grade))).sort((a, b) => gradeSortValue(a) - gradeSortValue(b));
