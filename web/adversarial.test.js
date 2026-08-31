@@ -166,6 +166,37 @@ assert(
   }).some(i => /grade-level blocks/i.test(i))
 );
 
+console.log('\n=== Multi-group session slots ===');
+
+const multiLog = [
+  { studentId: 'a', name: 'Student A', grade: '3', groupId: 'BradCade', week: 'Week 1', day: 'Tue', start: '12:35 PM', end: '1:05 PM' },
+  { studentId: 'b', name: 'Student B', grade: '3', groupId: 'EastAva', week: 'Week 1', day: 'Tue', start: '12:35 PM', end: '1:05 PM' }
+];
+const multiStudents = [
+  { id: 'a', firstName: 'Student', lastName: 'A', grade: '3', serviceType: 'Group', groupIds: ['BradCade', 'EastAva'], groupId: 'BradCade', frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' },
+  { id: 'b', firstName: 'Student', lastName: 'B', grade: '3', serviceType: 'Group', groupIds: ['EastAva'], groupId: 'EastAva', frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }
+];
+assert(
+  'sessionMateRows merges same slot with different group IDs',
+  eng.sessionMateRows(multiLog, multiLog[0]).length === 2
+);
+const multiCal = eng.buildCalendarModel(multiLog, eng.buildSettings({}), false, [{ day: 'Mon', start: '8:00 AM', end: '3:00 PM' }]);
+assert(
+  'Calendar merges both names at one slot despite group ID mismatch',
+  multiCal.entries.some(e => e.names.length === 2),
+  JSON.stringify(multiCal.entries)
+);
+assert(
+  'canonicalGroupIdForSlot prefers EastAva when student lists it',
+  eng.canonicalGroupIdForSlot(multiLog, multiStudents) === 'EastAva'
+);
+const addCheck = eng.canAddStudentToSession({ scheduleLog: multiLog, students: multiStudents, settings: {}, availability: [], grades: [], constraints: [] }, multiLog[0], 'b');
+assert(
+  'Student already in slot is not "already booked"',
+  !addCheck.ok && /Already in this session/i.test(addCheck.error),
+  addCheck.error || 'unexpected'
+);
+
 console.log('\n=== Locked blank week ===');
 
 const locked = eng.loadLockedSessions([{
