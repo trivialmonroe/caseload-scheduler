@@ -197,6 +197,37 @@ assert(
   addCheck.error || 'unexpected'
 );
 
+console.log('\n=== Session extension ===');
+
+const extendInput = {
+  settings: eng.buildSettings({ minSessionLength: 15, maxSessionLength: 60, slotIncrement: 5 }),
+  students: [{
+    id: 'u1', firstName: 'Under', lastName: 'Kid', grade: '3', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 45, status: 'Active'
+  }],
+  availability: [{ day: 'Tue', start: '8:00 AM', end: '3:00 PM', pattern: '' }],
+  grades: [],
+  constraints: [],
+  scheduleLog: [{
+    studentId: 'u1', name: 'Under Kid', grade: '3', groupId: '', week: 'Week 1', day: 'Tue',
+    start: '12:35 PM', end: '1:05 PM', duration: 30, teacher: '', locked: ''
+  }]
+};
+const extendRow = extendInput.scheduleLog[0];
+const before = eng.reviewFromScheduleLog(extendInput).find(r => r.id === 'u1');
+assert('Under student starts under minutes', before && before.status === 'Under' && before.scheduled === 30);
+const extCheck = eng.validateSessionExtension(extendInput, extendRow, 45);
+assert('45 min extension is valid', extCheck.ok, extCheck.error || '');
+assert(
+  'Extension preview shows minutes met',
+  extCheck.impacts && extCheck.impacts[0].statusAfter === 'Met' && extCheck.impacts[0].after === 45
+);
+const afterLog = eng.previewLogWithSessionDuration(extendInput, extendRow, 45);
+const after = eng.reviewFromScheduleLog(Object.assign({}, extendInput, { scheduleLog: afterLog })).find(r => r.id === 'u1');
+assert('Live review counts extended session minutes', after && after.scheduled === 45 && after.status === 'Met');
+const opts = eng.findSessionExtensionOptions(extendInput, extendRow);
+assert('Extension options include 45 min', opts.options && opts.options.some(o => o.duration === 45));
+
 console.log('\n=== Locked blank week ===');
 
 const locked = eng.loadLockedSessions([{

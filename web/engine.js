@@ -1221,6 +1221,119 @@ function findSwapCandidates(input, logRow) {
   };
 }
 
+function previewLogWithSessionDuration(input, logRow, newDurationMinutes) {
+  let start;
+  try { start = timeStrToMinutes(logRow.start); } catch (e) { return input.scheduleLog || []; }
+  const endStr = minutesToTimeStr(start + newDurationMinutes);
+  const mates = sessionMateRows(input.scheduleLog, logRow);
+  const mateKeys = {};
+  mates.forEach(r => { mateKeys[sessionSlotKey(r) + '|' + String(r.studentId).trim()] = true; });
+  return (input.scheduleLog || []).map(r => {
+    const key = sessionSlotKey(r) + '|' + String(r.studentId).trim();
+    if (!mateKeys[key]) return r;
+    return Object.assign({}, r, { end: endStr, duration: newDurationMinutes });
+  });
+}
+
+/** Validate extending (not shortening) a session; returns coverage impact per member. */
+function validateSessionExtension(input, logRow, newDurationMinutes) {
+  const settings = buildSettings(input.settings);
+  const availByPattern = loadProviderAvailability(input.availability);
+  const gradeBlackouts = loadGradeBlackouts(input.grades);
+  const studentConstraints = loadStudentConstraints(input.constraints);
+  const students = loadStudents(input.students);
+  const studentsById = {};
+  students.forEach(s => { studentsById[s.id] = s; });
+
+  let start;
+  try { start = timeStrToMinutes(logRow.start); } catch (e) { return { ok: false, error: 'Bad session start time.' }; }
+
+  const newDuration = Number(newDurationMinutes);
+  if (!Number.isFinite(newDuration) || newDuration <= 0) return { ok: false, error: 'Invalid duration.' };
+
+  let currentDur;
+  try { currentDur = timeStrToMinutes(logRow.end) - start; } catch (e) { currentDur = Number(logRow.duration) || 0; }
+
+  if (newDuration <= currentDur) return { ok: false, error: 'Choose a duration longer than the current session (' + currentDur + ' min).' };
+  if (newDuration < settings.minSessionLength) {
+    return { ok: false, error: 'Session would be shorter than minimum (' + settings.minSessionLength + ' min).' };
+  }
+  if (newDuration > settings.maxSessionLength) {
+    return { ok: false, error: 'Session would exceed maximum (' + settings.maxSessionLength + ' min).' };
+  }
+
+  const resolved = resolveSessionMembers(input.scheduleLog, logRow, studentsById);
+  if (!resolved.members.length) return { ok: false, error: 'No active members for this session.' };
+
+  const aWeek = weekNumFromLogRow(logRow);
+  const day = normalizeScheduleDay(logRow.day);
+  const session = {
+    members: resolved.members,
+    sessionLength: newDuration,
+    week: aWeek.weekNum,
+    reqId: String(logRow.groupId || resolved.members[0].id)
+  };
+
+  const mateRows = sessionMateRows(input.scheduleLog, logRow);
+  const exclude = {};
+  mateRows.forEach(r => { exclude[sessionKeyFromLogRow(r) + '|' + String(r.studentId).trim()] = true; });
+  const bookings = fillBookingsExcluding(input.scheduleLog, settings, students, exclude);
+
+  if (!canPlaceSessionAt(session, day, start, availByPattern, gradeBlackouts, studentConstraints, bookings.providerBookingsByWeek, bookings.memberBookingsByWeek, settings)) {
+    return { ok: false, error: 'Extended time conflicts with availability, blackouts, or another booking.' };
+  }
+
+  const beforeReview = reviewFromScheduleLog(input);
+  const afterReview = reviewFromScheduleLog(Object.assign({}, input, {
+    scheduleLog: previewLogWithSessionDuration(input, logRow, newDuration)
+  }));
+
+  const impacts = resolved.members.map(m => {
+    const before = beforeReview.find(r => r.id === m.id);
+    const after = afterReview.find(r => r.id === m.id);
+    return {
+      id: m.id,
+      name: m.firstName + ' ' + m.lastName,
+      before: before ? before.scheduled : 0,
+      after: after ? after.scheduled : 0,
+      required: after ? after.required : (before ? before.required : 0),
+      statusBefore: before ? before.status : '',
+      statusAfter: after ? after.status : ''
+    };
+  });
+
+  return {
+    ok: true,
+    newDuration,
+    newEnd: minutesToTimeStr(start + newDuration),
+    currentDuration: currentDur,
+    impacts
+  };
+}
+
+/** Stepwise longer durations that still fit constraints (for extend chips). */
+function findSessionExtensionOptions(input, logRow, limit) {
+  const settings = buildSettings(input.settings);
+  const lim = limit || 12;
+  let currentDur;
+  try {
+    currentDur = timeStrToMinutes(logRow.end) - timeStrToMinutes(logRow.start);
+  } catch (e) { return { error: 'Bad session times.', options: [], currentDuration: 0, increment: settings.slotIncrement }; }
+
+  const options = [];
+  for (let dur = currentDur + settings.slotIncrement; dur <= settings.maxSessionLength; dur += settings.slotIncrement) {
+    const check = validateSessionExtension(input, logRow, dur);
+    if (!check.ok) break;
+    options.push({
+      duration: dur,
+      end: check.newEnd,
+      impacts: check.impacts
+    });
+    if (options.length >= lim) break;
+  }
+  return { options, currentDuration: currentDur, increment: settings.slotIncrement };
+}
+
 function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   settings = buildSettings(settings);
   const sessions = [];
@@ -1651,6 +1764,7 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeScheduleDay, loadLockedSessions,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
     sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, reviewFromScheduleLog,
-    scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview
+    scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview,
+    validateSessionExtension, findSessionExtensionOptions, previewLogWithSessionDuration
   };
 }
