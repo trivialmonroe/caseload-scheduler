@@ -366,6 +366,9 @@
       display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
     }
     .session-drawer .add-row select { width: 100%; min-width: 0; }
+    .extend-impact { margin: 6px 0 0; padding-left: 18px; }
+    .extend-impact li { margin: 4px 0; }
+    table tr.on td { background: var(--accent-soft); }
     .member-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
     .member-row {
       display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
@@ -736,6 +739,48 @@ function jumpToStudentSession(studentId) {
   });
 }
 
+function openSessionEditorForStudent(studentId) {
+  const i = (state.scheduleLog || []).findIndex(row => String(row.studentId) === String(studentId));
+  if (i < 0) { setStatus('No session on the schedule for that student yet.', 'bad'); return; }
+  altFor = i;
+  scheduleTab = scheduleTab === 'coverage' ? 'coverage' : 'week';
+  showView('schedule');
+  requestAnimationFrame(() => {
+    const pop = document.getElementById('session-popover');
+    if (pop) pop.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function extensionImpactHtml(impacts) {
+  if (!impacts || !impacts.length) return '';
+  return '<ul class="meta extend-impact">' + impacts.map(i =>
+    `<li>${esc(i.name)}: ${i.before}→${i.after} min placed (need ${i.required}) · <span class="pill ${i.statusAfter === 'Under' ? 'bad' : (i.statusAfter === 'Over' ? 'warn' : 'ok')}">${esc(i.statusAfter || i.statusBefore)}</span></li>`
+  ).join('') + '</ul>';
+}
+
+function applySessionExtension(newDurationMinutes) {
+  if (altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  if (String(row.locked).toLowerCase() === 'yes') {
+    setStatus('Unlock the session before extending it.', 'bad');
+    return;
+  }
+  const check = validateSessionExtension(engineInput(), row, newDurationMinutes);
+  if (!check.ok) { setStatus(check.error, 'bad'); return; }
+  const over = (check.impacts || []).filter(i => i.statusAfter === 'Over');
+  if (over.length && !confirm('Extending may put ' + over.map(o => o.name).join(', ') + ' over required minutes.\n\nExtend anyway?')) return;
+  beginEdit('Extend session');
+  let start;
+  try { start = timeStrToMinutes(row.start); } catch (e) { setStatus('Bad session time.', 'bad'); return; }
+  const endStr = minutesToTimeStr(start + Number(newDurationMinutes));
+  sessionMateRows(state.scheduleLog, row).forEach(r => {
+    r.end = endStr;
+    r.duration = Number(newDurationMinutes);
+  });
+  refreshLiveReview('Session extended to ' + newDurationMinutes + ' min — coverage updated.');
+  render();
+}
+
 function loadSampleAndGenerate() {
   state = sampleWorkspace();
   caseloadDirty = false;
@@ -1039,6 +1084,7 @@ function sessionPopoverHtml() {
   const mates = sessionMateRows(state.scheduleLog, row);
   const found = findAlternativeSlots(engineInput(), row);
   const swapsFound = findSwapCandidates(engineInput(), row);
+  const extendOpts = findSessionExtensionOptions(engineInput(), row);
   const review = reviewRows();
   const memberIds = mates.map(r => String(r.studentId));
   const addOptions = state.students.filter(s => {
@@ -1053,7 +1099,7 @@ function sessionPopoverHtml() {
       <button type="button" class="ghost" onclick="closeSessionPopover()">Close</button>
     </div>
     <div class="drawer-meta">
-      <span>${esc(row.week || 'Every Week')}</span>
+      <span>${esc(normalizeWeekLabel(row.week || '') || 'Every Week')}</span>
       <span>${esc(row.day)} ${esc(row.start)}–${esc(row.end)}</span>
       <span>${esc(row.duration)} min</span>
       ${row.groupId ? `<span>${esc(row.groupId)}</span>` : ''}
@@ -1104,6 +1150,30 @@ function sessionPopoverHtml() {
     });
   }
   html += `</div></details>
+    <details class="drawer-sec" open><summary>Extend session</summary>
+      <p class="meta">Add minutes when coverage is under. Validates availability, blackouts, and updates placed minutes for every member.</p>
+      <div class="chip-row">`;
+  if (locked) {
+    html += '<span class="meta">Unlock to extend this session.</span>';
+  } else if (extendOpts.error) {
+    html += `<span class="meta">${esc(extendOpts.error)}</span>`;
+  } else if (!(extendOpts.options || []).length) {
+    html += '<span class="meta">No room to extend (max length, availability, or a conflict).</span>';
+  } else {
+    extendOpts.options.forEach(o => {
+      html += `<button type="button" class="chip" onclick="applySessionExtension(${o.duration})" title="${esc(extensionImpactHtml(o.impacts).replace(/<[^>]+>/g, ' '))}">${o.duration} min · ends ${esc(o.end)}</button>`;
+    });
+  }
+  html += `</div>`;
+  if (!locked && (extendOpts.options || []).length) {
+    const next = extendOpts.options[0];
+    html += `<p class="meta">Next step (+${next.duration - extendOpts.currentDuration} min):</p>${extensionImpactHtml(next.impacts)}`;
+    html += `<div class="add-row" style="margin-top:8px">
+      <input type="number" id="extend-minutes" min="${extendOpts.currentDuration + extendOpts.increment}" max="${state.settings.maxSessionLength || 60}" step="${extendOpts.increment}" placeholder="${extendOpts.currentDuration + extendOpts.increment}">
+      <button type="button" onclick="applySessionExtension(Number(document.getElementById('extend-minutes').value))">Apply length</button>
+    </div>`;
+  }
+  html += `</details>
     <div class="card-actions">
       <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
     </div></aside>`;
@@ -1298,10 +1368,6 @@ function renderWeekGrid(cal, week) {
   const weekLabel = cal.hasSpecificWeeks ? ('Week ' + week) : 'Every Week';
   const inc = cal.inc, start = cal.minStart, rows = cal.rowsCount;
   const cells = {};
-  const selected = altFor != null ? state.scheduleLog[altFor] : null;
-  let selectedStart = null;
-  if (selected) { try { selectedStart = timeStrToMinutes(selected.start); } catch (e) {} }
-
   DAYS.forEach(d => { cells[d] = Array.from({ length: rows }, () => null); });
   cal.entries.filter(e => e.weekLabel === 'Every Week' || e.weekLabel === weekLabel).forEach(e => {
     const r0 = Math.max(0, Math.round((e.start - start) / inc));
@@ -1330,22 +1396,18 @@ function renderWeekGrid(cal, week) {
         html += `<div class="cal-slot${ok}" data-day="${d}" data-start="${slotStart}" data-span="${inc}" data-week="${esc(weekLabel)}"></div>`;
         return;
       }
-      const isSel = selected && c.day === selected.day && c.start === selectedStart && String(c.studentId) === String(selected.studentId);
-      const logIdx = (state.scheduleLog || []).findIndex(row => {
-        try {
-          return normalizeScheduleDay(row.day) === c.day && timeStrToMinutes(row.start) === c.start && String(row.studentId) === String(c.studentId);
-        } catch (e) { return false; }
-      });
+      const logIdx = findLogIndexForCalendarSlot(state.scheduleLog, c.day, c.start, c.studentId, weekLabel);
       const locked = logIdx >= 0 && String(state.scheduleLog[logIdx].locked).toLowerCase() === 'yes';
       const autoGroup = c.groupId && String(c.groupId).indexOf('AUTO-GROUP-') === 0;
       const badges = (locked ? '<span class="sess-badge lock" title="Locked">🔒</span>' : '') +
         (autoGroup ? '<span class="sess-badge auto">Auto</span>' : '');
+      const isSel = logIdx >= 0 && logIdx === altFor;
       html += `<div class="cal-slot${ok}" style="grid-row: span ${c.span}" data-day="${d}" data-start="${c.start}" data-span="${spanMins}" data-week="${esc(weekLabel)}">
         <div class="sess${isSel ? ' on' : ''}${locked ? ' locked-drag' : ''}"
           draggable="${locked ? 'false' : 'true'}"
           data-log-index="${logIdx}"
           title="${locked ? 'Unlock to drag — click to edit' : 'Drag to a green cell, or click to edit'}"
-          onclick="onSessionClick('${esc(c.day)}',${c.start},'${esc(c.studentId)}')"
+          onclick="onSessionClick('${esc(c.day)}',${c.start},'${esc(c.studentId)}','${esc(weekLabel)}')"
           style="background:${c.color.bg};color:${c.color.text}">${badges}${c.text}</div>
       </div>`;
     });
@@ -1353,9 +1415,9 @@ function renderWeekGrid(cal, week) {
   return html + '</div>';
 }
 
-function onSessionClick(day, startMins, studentId) {
+function onSessionClick(day, startMins, studentId, weekLabel) {
   if (suppressSessionClick) { suppressSessionClick = false; return; }
-  openCalendarSession(day, startMins, studentId);
+  openCalendarSession(day, startMins, studentId, weekLabel);
 }
 
 function weekKeyFromLabel(weekLabel) {
@@ -1609,9 +1671,9 @@ function bindCalendarDnD() {
       }
       beginEdit('Move on calendar');
       moveSessionToCandidate(idx, cand);
-      altFor = state.scheduleLog.findIndex(r =>
-        String(r.studentId) === String(studentId) && normalizeScheduleDay(r.day) === cand.day &&
-        (() => { try { return timeStrToMinutes(r.start) === cand.start; } catch (err) { return false; } })()
+      const movedRow = state.scheduleLog[idx];
+      altFor = findLogIndexForCalendarSlot(
+        state.scheduleLog, cand.day, cand.start, movedRow.studentId, weekLabelFromCandidateWeek(cand.week)
       );
       if (altFor < 0) altFor = null;
       refreshLiveReview('Moved on the calendar.');
@@ -1622,11 +1684,8 @@ function bindCalendarDnD() {
   });
 }
 
-function openCalendarSession(day, startMins, studentId) {
-  const i = (state.scheduleLog || []).findIndex(r => {
-    try { return normalizeScheduleDay(r.day) === day && timeStrToMinutes(r.start) === startMins && String(r.studentId) === String(studentId); }
-    catch (e) { return false; }
-  });
+function openCalendarSession(day, startMins, studentId, weekLabel) {
+  const i = findLogIndexForCalendarSlot(state.scheduleLog, day, startMins, studentId, weekLabel);
   if (i < 0) { setStatus('Could not find that session.', 'bad'); return; }
   altFor = i;
   scheduleTab = 'week';
@@ -1638,12 +1697,15 @@ function renderReviewBody() {
   if (!rows.length) return '<p class="lede">Generate a schedule to see required vs placed minutes.</p>';
   const met = rows.filter(r => r.status === 'Met' || r.status === 'Over').length;
   const hasCal = (state.scheduleLog || []).length > 0;
-  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes. Use <b>Calendar</b> to jump to a session on the week view.</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th>${hasCal ? '<th></th>' : ''}</tr></thead><tbody>`;
+  let html = `<p class="lede">${met} of ${rows.length} students meeting required minutes. Select a session on <b>Week</b> or use <b>Edit session</b> here to extend time when someone is under.</p><table><thead><tr><th>Student</th><th>Freq</th><th>Required</th><th>Placed</th><th>%</th><th>Status</th><th>Notes</th>${hasCal ? '<th></th>' : ''}</tr></thead><tbody>`;
   rows.forEach(r => {
     const onCal = hasCal && (state.scheduleLog || []).some(row => String(row.studentId) === String(r.id));
-    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td>${hasCal ? `<td>${onCal ? `<button type="button" class="ghost" onclick="jumpToStudentSession('${esc(r.id)}')">Calendar</button>` : '<span class="meta">—</span>'}</td>` : ''}</tr>`;
+    const selected = altFor != null && state.scheduleLog[altFor] && String(state.scheduleLog[altFor].studentId) === String(r.id);
+    html += `<tr class="${r.status === 'Under' ? 'under' : 'met'}${selected ? ' on' : ''}"><td>${esc(r.name)} <span class="meta">${esc(r.id)}</span></td><td>${esc(r.freq)}</td><td>${r.required}</td><td>${r.scheduled}</td><td>${r.pct}%</td><td>${esc(r.status)}</td><td class="meta">${esc(r.notes)}</td>${hasCal ? `<td>${onCal ? `<button type="button" class="ghost" onclick="openSessionEditorForStudent('${esc(r.id)}')">Edit session</button> <button type="button" class="ghost" onclick="jumpToStudentSession('${esc(r.id)}')">Week</button>` : '<span class="meta">—</span>'}</td>` : ''}</tr>`;
   });
-  return html + '</tbody></table>';
+  html += '</tbody></table>';
+  if (altFor != null && state.scheduleLog[altFor]) html += sessionPopoverHtml();
+  return html;
 }
 
 function toggleLock(i) {
