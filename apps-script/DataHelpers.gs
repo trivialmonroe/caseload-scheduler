@@ -285,6 +285,32 @@ function weeksForEntry(weekValue, settings) {
   return weekValue === ALL_WEEKS_KEY ? settings.weeksList : [weekValue];
 }
 
+/** Map quarter week 1/3/5/7/9 → 1 and 2/4/6/8 → 2 for the provider's A/B rotation. */
+function twoWeekCycleWeek(weekNum) {
+  return ((weekNum - 1) % 2) + 1;
+}
+
+/** Day/time already established for this reqId in the odd or even half of the 2-week cycle. */
+function establishedTwoWeekCycleSlot(reqId, cycleWeek, scheduled) {
+  const match = (scheduled || []).find(s =>
+    s.reqId === reqId &&
+    s.week !== ALL_WEEKS_KEY &&
+    twoWeekCycleWeek(s.week) === cycleWeek
+  );
+  return match ? { day: match.day, start: match.start } : null;
+}
+
+/** When consistent pattern is on, quarterly sessions must reuse their cycle's Week 1/2 template. */
+function filterCandidatesForTwoWeekCycle(candidates, session, scheduled, settings) {
+  if (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) return candidates;
+  const filtered = (candidates || []).filter(c => {
+    const template = establishedTwoWeekCycleSlot(session.reqId, twoWeekCycleWeek(c.week), scheduled);
+    if (!template) return true;
+    return c.day === template.day && c.start === template.start;
+  });
+  return filtered.length ? filtered : candidates;
+}
+
 function weekLabel(week) {
   return week === ALL_WEEKS_KEY ? 'Every Week' : `Week ${week}`;
 }

@@ -264,7 +264,8 @@ function frontLoadFirstSessionsIntoEarlyWeeks(pending, scheduled, availByPattern
   candidateSessions.forEach(session => {
     // Step 1: try an individual slot, hard-restricted to Week 1 or 2.
     const allCandidates = findCandidateSlots(session, availByPattern, gradeBlackouts, studentConstraints, providerBookingsByWeek, memberBookingsByWeek, settings, [], reqDaysUsed);
-    const earlyOnly = allCandidates
+    const cycleFiltered = filterCandidatesForTwoWeekCycle(allCandidates, session, scheduled, settings);
+    const earlyOnly = cycleFiltered
       .filter(c => c.week <= 2)
       .sort((a, b) => a.week - b.week || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.start - b.start);
 
@@ -545,10 +546,13 @@ function generateSchedule() {
       const wk = c.week === ALL_WEEKS_KEY ? 0 : c.week;
       return wk <= 2 ? 0 : 1; // 0 sorts first - Week 1 or 2
     };
-    const matchesEstablishedPattern = (c) => {
+    bestCandidates = filterCandidatesForTwoWeekCycle(bestCandidates, session, scheduled, settings);
+    const matchesTwoWeekCyclePattern = (c) => {
       if (!settings.preferConsistentPattern || session.week !== ANY_WEEK_KEY) return 0;
+      const template = establishedTwoWeekCycleSlot(session.reqId, twoWeekCycleWeek(c.week), scheduled);
+      if (template) return (c.day === template.day && c.start === template.start) ? 0 : 1;
       const alreadyUsesThisSlot = scheduled.some(s => s.reqId === session.reqId && s.day === c.day && s.start === c.start);
-      return alreadyUsesThisSlot ? 0 : 1; // 0 sorts first - matches this student's established day/time
+      return alreadyUsesThisSlot ? 0 : 1;
     };
     const weeksForCandidate = (c) => weeksForEntry(c.week, settings);
     const dayLoad = (c) => weeksForCandidate(c).reduce((sum, w) => sum + ((providerBookingsByWeek[w][c.day] || []).length), 0);
@@ -558,7 +562,7 @@ function generateSchedule() {
       if (weekLoadDiff !== 0) return weekLoadDiff;
       const earlyDiff = earlyStartBonus(a) - earlyStartBonus(b);
       if (earlyDiff !== 0) return earlyDiff;
-      const patternDiff = matchesEstablishedPattern(a) - matchesEstablishedPattern(b);
+      const patternDiff = matchesTwoWeekCyclePattern(a) - matchesTwoWeekCyclePattern(b);
       if (patternDiff !== 0) return patternDiff;
       const dayLoadDiff = dayLoad(a) - dayLoad(b);
       if (dayLoadDiff !== 0) return dayLoadDiff;

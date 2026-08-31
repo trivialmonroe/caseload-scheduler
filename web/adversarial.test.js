@@ -197,6 +197,58 @@ assert(
   addCheck.error || 'unexpected'
 );
 
+console.log('\n=== Two-week cycle pattern repeat ===');
+
+const cycleStudents = [];
+for (let i = 1; i <= 6; i++) {
+  cycleStudents.push({
+    id: 'q' + i, firstName: 'Q', lastName: String(i), grade: '3', serviceType: 'Individual',
+    noGroup: false, frequencyType: 'Quarterly', sessionsPerQuarter: 4, quarterlySessionLength: 30,
+    status: 'Active'
+  });
+}
+const cycleResult = eng.runSchedulingEngine({
+  settings: eng.buildSettings({ preferConsistentPattern: true, weeksPerQuarter: 9, frontLoadFirstSessions: true }),
+  students: cycleStudents,
+  availability: [
+    { day: 'Mon', start: '8:00 AM', end: '9:00 AM', pattern: 'A' },
+    { day: 'Tue', start: '8:00 AM', end: '9:00 AM', pattern: 'B' },
+    { day: 'Wed', start: '9:00 AM', end: '3:00 PM', pattern: '' }
+  ],
+  grades: [],
+  constraints: [],
+  scheduleLog: []
+});
+function slotsByStudentWeek(scheduled) {
+  const m = {};
+  (scheduled || []).forEach(s => {
+    s.members.forEach(mem => {
+      if (!m[mem.id]) m[mem.id] = {};
+      m[mem.id][s.week] = { day: s.day, start: s.start };
+    });
+  });
+  return m;
+}
+const bySw = slotsByStudentWeek(cycleResult.scheduled);
+let cycleOk = Object.keys(bySw).length > 0;
+Object.keys(bySw).forEach(sid => {
+  const weeks = bySw[sid];
+  if (!weeks[1]) return;
+  [3, 5, 7, 9].forEach(w => {
+    if (weeks[w] && (weeks[w].day !== weeks[1].day || weeks[w].start !== weeks[1].start)) cycleOk = false;
+  });
+  if (!weeks[2]) return;
+  [4, 6, 8].forEach(w => {
+    if (weeks[w] && (weeks[w].day !== weeks[2].day || weeks[w].start !== weeks[2].start)) cycleOk = false;
+  });
+});
+assert('Quarterly sessions repeat 2-week A/B cycle slots', cycleOk, JSON.stringify(bySw));
+
+assert(
+  'twoWeekCycleWeek maps odd/even quarter weeks',
+  eng.twoWeekCycleWeek(1) === 1 && eng.twoWeekCycleWeek(3) === 1 && eng.twoWeekCycleWeek(2) === 2 && eng.twoWeekCycleWeek(4) === 2
+);
+
 console.log('\n=== Locked blank week ===');
 
 const locked = eng.loadLockedSessions([{
