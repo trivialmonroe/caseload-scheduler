@@ -1371,27 +1371,33 @@ function validateSessionExtension(input, logRow, newDurationMinutes) {
   };
 }
 
+/** Minutes added per extend step in the session editor (always 5). */
+const EXTEND_STEP_MINUTES = 5;
+
 /** Stepwise longer durations that still fit constraints (for extend chips). */
 function findSessionExtensionOptions(input, logRow, limit) {
   const settings = buildSettings(input.settings);
   const lim = limit || 12;
+  const step = EXTEND_STEP_MINUTES;
   let currentDur;
   try {
     currentDur = timeStrToMinutes(logRow.end) - timeStrToMinutes(logRow.start);
-  } catch (e) { return { error: 'Bad session times.', options: [], currentDuration: 0, increment: settings.slotIncrement }; }
+  } catch (e) { return { error: 'Bad session times.', options: [], currentDuration: 0, increment: step }; }
 
   const options = [];
-  for (let dur = currentDur + settings.slotIncrement; dur <= settings.maxSessionLength; dur += settings.slotIncrement) {
+  for (let add = step; currentDur + add <= settings.maxSessionLength; add += step) {
+    const dur = currentDur + add;
     const check = validateSessionExtension(input, logRow, dur);
     if (!check.ok) break;
     options.push({
       duration: dur,
+      addMinutes: add,
       end: check.newEnd,
       impacts: check.impacts
     });
     if (options.length >= lim) break;
   }
-  return { options, currentDuration: currentDur, increment: settings.slotIncrement };
+  return { options, currentDuration: currentDur, increment: step };
 }
 
 function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
