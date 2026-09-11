@@ -390,5 +390,41 @@ const bobJoinedLocked = (lockedRun.scheduled || []).some(s =>
 assert('Locked host blocks auto-group rescue', !bobJoinedLocked && (lockedRun.rescuedStudentCount || 0) === 0,
   'rescued=' + lockedRun.rescuedStudentCount + ' ' + JSON.stringify((lockedRun.scheduled || []).map(s => ({ locked: s.locked, ids: s.members.map(m => m.id) }))));
 
+console.log('\n=== Split locked solos survive regenerate ===');
+
+const splitStudents = [
+  { id: 'cam', firstName: 'Cam', lastName: 'Park', grade: '3', serviceType: 'Group', groupId: 'G1',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' },
+  { id: 'dana', firstName: 'Dana', lastName: 'Rios', grade: '3', serviceType: 'Group', groupId: 'G1',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }
+];
+const splitInput = {
+  settings: eng.buildSettings({}),
+  students: splitStudents,
+  availability: [
+    { day: 'Mon', start: '8:00 AM', end: '12:00 PM', pattern: '' },
+    { day: 'Fri', start: '8:00 AM', end: '12:00 PM', pattern: '' }
+  ],
+  grades: [],
+  constraints: [],
+  scheduleLog: [
+    { studentId: 'cam', name: 'Cam Park', grade: '3', groupId: 'EDIT-SOLO-cam', week: 'Every Week',
+      day: 'Fri', start: '8:00 AM', end: '8:30 AM', duration: 30, teacher: '', locked: 'Yes' },
+    { studentId: 'dana', name: 'Dana Rios', grade: '3', groupId: 'EDIT-SOLO-dana', week: 'Every Week',
+      day: 'Fri', start: '8:00 AM', end: '8:30 AM', duration: 30, teacher: '', locked: 'Yes' }
+  ]
+};
+assert('isEditSoloGroupId detects EDIT-SOLO prefix', eng.isEditSoloGroupId('EDIT-SOLO-cam') && !eng.isEditSoloGroupId('G1'));
+const splitMates = eng.sessionMateRows(splitInput.scheduleLog, splitInput.scheduleLog[0]);
+assert('EDIT-SOLO mates are independent at same clock time', splitMates.length === 1 && splitMates[0].studentId === 'cam');
+const splitRun = eng.runSchedulingEngine(splitInput);
+const splitLog = splitRun.logRows || [];
+const camRow = splitLog.find(r => r.studentId === 'cam');
+const danaRow = splitLog.find(r => r.studentId === 'dana');
+assert('Cam keeps EDIT-SOLO after regenerate', camRow && camRow.groupId === 'EDIT-SOLO-cam' && String(camRow.locked).toLowerCase() === 'yes', JSON.stringify(camRow));
+assert('Dana keeps EDIT-SOLO after regenerate', danaRow && danaRow.groupId === 'EDIT-SOLO-dana' && String(danaRow.locked).toLowerCase() === 'yes', JSON.stringify(danaRow));
+assert('Regenerate does not merge split locked solos',
+  !(splitRun.scheduled || []).some(s => s.members.some(m => m.id === 'cam') && s.members.some(m => m.id === 'dana')));
+
 console.log('\n--- ' + passed + ' passed, ' + failed + ' failed ---\n');
 process.exit(failed ? 1 : 0);

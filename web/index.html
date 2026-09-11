@@ -1391,14 +1391,14 @@ function removeFromSession(studentId) {
 function splitSessionToIndividuals() {
   if (altFor == null) return;
   const row = state.scheduleLog[altFor];
-  const mates = sessionMateRows(state.scheduleLog, row);
-  if (mates.length <= 1) { setStatus('Session already has one student.', 'bad'); return; }
-  if (!confirm('Split this group into locked individual sessions at the same time?\n\nGenerate will not re-merge them while they stay locked. Move students afterward if you want different times.')) return;
-  beginEdit('Split group');
+  // Use raw same-slot mates (pre-split), not EDIT-SOLO filtering.
   const slotKey = sessionSlotKey(row);
-  state.scheduleLog.forEach(r => {
-    if (sessionSlotKey(r) !== slotKey) return;
-    r.groupId = '';
+  const mates = (state.scheduleLog || []).filter(r => sessionSlotKey(r) === slotKey);
+  if (mates.length <= 1) { setStatus('Session already has one student.', 'bad'); return; }
+  if (!confirm('Split this group into locked individual sessions at the same time?\n\nEach student gets their own locked block so generate will not re-merge them. Move students afterward if you want different times.')) return;
+  beginEdit('Split group');
+  mates.forEach(r => {
+    r.groupId = 'EDIT-SOLO-' + String(r.studentId);
     r.locked = 'Yes';
   });
   refreshLiveReview('Split into ' + mates.length + ' locked individual sessions (same time).');
@@ -1462,10 +1462,15 @@ function reconcileAllSessionSlots() {
   const seen = {};
   let changed = false;
   (state.scheduleLog || []).forEach(r => {
+    // Locked EDIT-SOLO rows are independent — do not re-glue them via caseload Group IDs.
+    if (typeof isEditSoloGroupId === 'function' && isEditSoloGroupId(r.groupId) && String(r.locked || '').toLowerCase() === 'yes') {
+      return;
+    }
     const k = sessionSlotKey(r);
     if (seen[k]) return;
     seen[k] = true;
     const mates = sessionMateRows(state.scheduleLog, r);
+    if (mates.every(m => typeof isEditSoloGroupId === 'function' && isEditSoloGroupId(m.groupId))) return;
     const gid = canonicalGroupIdForSlot(mates, state.students);
     if (gid && unifySessionGroupIds(state.scheduleLog, r, gid)) changed = true;
   });

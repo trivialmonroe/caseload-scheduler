@@ -584,10 +584,30 @@ function runSchedulingEngine(input) {
   let unscheduled = [];
 
   lockedSessions.forEach(ls => {
-    const members = ls.studentIds.map(id => studentsById[id]).filter(Boolean);
+    let members = ls.studentIds.map(id => studentsById[id]).filter(Boolean);
     if (!members.length) return;
+    // Preserve EDIT-SOLO / EDIT-GROUP / AUTO-GROUP labels from the locked log so
+    // flattenScheduleLog does not re-stamp caseload Group IDs (e.g. G1) after a split.
+    const lockGid = String(ls.reqId || '');
+    const keepLockGroupId = isEditSoloGroupId(lockGid) ||
+      lockGid.indexOf('EDIT-GROUP-') === 0 ||
+      lockGid.indexOf('AUTO-GROUP-') === 0;
+    if (keepLockGroupId) {
+      members = members.map(m => Object.assign({}, m, { groupId: lockGid }));
+    }
     const naturalReqIds = new Set();
-    members.forEach(m => naturalReqIds.add((m.serviceType.toLowerCase() === 'group' && m.groupId) ? m.groupId : m.id));
+    members.forEach(m => {
+      if (isEditSoloGroupId(lockGid)) {
+        // Split solos satisfy this student and their former caseload group req.
+        naturalReqIds.add(m.id);
+        const caseload = studentsById[m.id];
+        if (caseload && caseload.serviceType.toLowerCase() === 'group' && caseload.groupId) {
+          naturalReqIds.add(caseload.groupId);
+        }
+      } else {
+        naturalReqIds.add((m.serviceType.toLowerCase() === 'group' && m.groupId) ? m.groupId : m.id);
+      }
+    });
     const duration = ls.end - ls.start;
     naturalReqIds.forEach(reqId => {
       let bestIdx = -1, bestDiff = Infinity;
@@ -606,7 +626,18 @@ function runSchedulingEngine(input) {
     if (!reqDaysUsed[ls.reqId]) reqDaysUsed[ls.reqId] = {};
     if (!reqDaysUsed[ls.reqId][weekKey]) reqDaysUsed[ls.reqId][weekKey] = [];
     reqDaysUsed[ls.reqId][weekKey].push(ls.day);
-    scheduled.push({ reqId: ls.reqId, members, week: ls.week, day: ls.day, start: ls.start, end: ls.end, sessionIndex: 0, totalSessions: 0, locked: true });
+    scheduled.push({
+      reqId: ls.reqId,
+      groupId: keepLockGroupId ? lockGid : (members[0] && members[0].groupId) || '',
+      members,
+      week: ls.week,
+      day: ls.day,
+      start: ls.start,
+      end: ls.end,
+      sessionIndex: 0,
+      totalSessions: 0,
+      locked: true
+    });
   });
 
   const fixedPending = pending.filter(s => s.fixedDay && s.fixedStart != null);
@@ -1141,14 +1172,25 @@ function sessionSlotKey(r) {
   ].join('|');
 }
 
+/** True when a log row is a locked solo produced by Split group. */
+function isEditSoloGroupId(groupId) {
+  return String(groupId || '').indexOf('EDIT-SOLO-') === 0;
+}
+
 /** Pick the group label that best fits everyone sharing a time slot. */
 function canonicalGroupIdForSlot(rows, students) {
+  const list = rows || [];
+  // Locked EDIT-SOLO rows are intentionally ungrouped — never re-apply caseload Group IDs.
+  if (list.length && list.every(r => isEditSoloGroupId(r.groupId) && String(r.locked || '').toLowerCase() === 'yes')) {
+    return '';
+  }
   const studentsById = {};
   (students || []).forEach(s => { studentsById[s.id] = s; });
   const scores = {};
-  (rows || []).forEach(r => {
+  list.forEach(r => {
     const gid = String(r.groupId || '').trim();
     if (gid) scores[gid] = (scores[gid] || 0) + 1;
+    if (isEditSoloGroupId(gid)) return;
     const s = studentsById[String(r.studentId).trim()];
     if (!s) return;
     const gids = parseGroupIds(s.groupIds && s.groupIds.length ? s.groupIds : s.groupId);
@@ -1158,7 +1200,7 @@ function canonicalGroupIdForSlot(rows, students) {
     });
   });
   const ranked = Object.keys(scores).sort((a, b) => scores[b] - scores[a]);
-  return ranked[0] || String((rows[0] && rows[0].groupId) || '').trim();
+  return ranked[0] || String((list[0] && list[0].groupId) || '').trim();
 }
 
 function unifySessionGroupIds(scheduleLog, logRow, groupId) {
@@ -1181,7 +1223,21 @@ function sessionKeyFromLogRow(r) {
 
 function sessionMateRows(scheduleLog, logRow) {
   const slot = sessionSlotKey(logRow);
-  return (scheduleLog || []).filter(r => sessionSlotKey(r) === slot);
+  const gid = String(logRow.groupId || '').trim();
+  // Locked EDIT-SOLO rows share a clock time but are independent sessions.
+  if (isEditSoloGroupId(gid) && String(logRow.locked || '').toLowerCase() === 'yes') {
+    return (scheduleLog || []).filter(r =>
+      sessionSlotKey(r) === slot &&
+      String(r.studentId) === String(logRow.studentId) &&
+      isEditSoloGroupId(r.groupId)
+    );
+  }
+  return (scheduleLog || []).filter(r => {
+    if (sessionSlotKey(r) !== slot) return false;
+    // Do not pull locked solos into a neighboring group block at the same time.
+    if (isEditSoloGroupId(r.groupId) && String(r.locked || '').toLowerCase() === 'yes') return false;
+    return true;
+  });
 }
 
 function findAlternativeSlots(input, logRow) {
@@ -1615,7 +1671,9 @@ function buildCalendarModel(logRows, settings, showAllWeeks, availability) {
   const entryMap = {};
   sessions.forEach(s => {
     if (!s.day || !DAYS.includes(s.day)) return;
-    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end;
+    // EDIT-SOLO locked rows keep their own calendar block even at the same clock time.
+    const soloSuffix = isEditSoloGroupId(s.groupId) ? ('|solo:' + String(s.studentId)) : '';
+    const key = s.weekLabel + '|' + s.day + '|' + s.start + '|' + s.end + soloSuffix;
     if (!entryMap[key]) entryMap[key] = { weekLabel: s.weekLabel, day: s.day, start: s.start, end: s.end, grade: s.grade, groupId: s.groupId || '', names: [], teachers: [], studentIds: [], groupIds: [] };
     entryMap[key].names.push(s.name);
     entryMap[key].studentIds.push(s.studentId);
@@ -2023,7 +2081,7 @@ if (typeof module !== 'undefined' && module.exports) {
     mergeImportBy, settingsFromImportRows, normalizeImportedScheduleRow, normalizeWeekLabel,
     normalizeScheduleDay, loadLockedSessions, logRowMatchesWeek, findLogIndexForCalendarSlot, weekLabelFromCandidateWeek,
     CSV_SCHEMAS, loadStudents, minutesToTimeStr, timeStrToMinutes, parseGroupIds,
-    sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, reviewFromScheduleLog,
+    sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, isEditSoloGroupId, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview,
     twoWeekCycleWeek, establishedTwoWeekCycleSlot, filterCandidatesForTwoWeekCycle,
     validateSessionExtension, findSessionExtensionOptions, previewLogWithSessionDuration,
