@@ -190,6 +190,9 @@ function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandi
   const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
 
   const candidates = hostCandidates.filter(entry => {
+    // Locked composition is closed — removing a student and locking the rest
+    // must not let auto-group rescue put them back on regenerate.
+    if (entry.locked) return false;
     if (entry.members.some(m => m.id === student.id || m.noGroup)) return false;     // not already in it / host opted out of grouping
     if (entry.members.length >= settings.maxGroupSize) return false;    // already at the configured headcount cap
     const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;

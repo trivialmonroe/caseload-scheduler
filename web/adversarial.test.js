@@ -317,5 +317,78 @@ assert(
   JSON.stringify(locked)
 );
 
+console.log('\n=== Manual session + off-day + locked host ===');
+
+const tightStudents = [
+  { id: 'ann', firstName: 'Ann', lastName: 'A', grade: '3', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' },
+  { id: 'bob', firstName: 'Bob', lastName: 'B', grade: '3', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }
+];
+const offDayInput = {
+  settings: eng.buildSettings({}),
+  students: tightStudents,
+  availability: [
+    { day: 'Mon', start: '8:00 AM', end: '12:00 PM', pattern: '' },
+    { day: 'Wed', start: '8:00 AM', end: '12:00 PM', pattern: '' }
+  ],
+  grades: [],
+  constraints: [],
+  scheduleLog: []
+};
+const offDay = eng.computeOffDayCandidates(offDayInput, 'Fri', { weekNum: 1, duration: 30 });
+assert('Off-day Fri is not normally worked', offDay.normallyWorks === false);
+assert('Off-day finds candidates using typical hours', offDay.candidates && offDay.candidates.length >= 1, JSON.stringify(offDay));
+assert('Off-day typical hours from other days', offDay.typicalHours && offDay.typicalHours.length >= 1);
+
+const createBlocked = eng.createManualSession(offDayInput, {
+  studentId: 'ann', day: 'Fri', start: '9:00 AM', duration: 30, week: 'Every Week', locked: true
+});
+assert('Manual create on off-day needs ignore flag', !createBlocked.ok && createBlocked.needsIgnoreAvailability);
+
+const createOk = eng.createManualSession(offDayInput, {
+  studentId: 'ann', day: 'Fri', start: '9:00 AM', duration: 30, week: 'Every Week',
+  locked: true, ignoreProviderAvailability: true
+});
+assert('Manual create with ignore works', createOk.ok && createOk.row && createOk.row.locked === 'Yes');
+assert('Manual create recur Every Week', createOk.row && createOk.row.week === 'Every Week');
+
+const oneSlotSettings = eng.buildSettings({ minSessionLength: 30, preferredSessionLength: 30, maxSessionLength: 60 });
+const unlockRescueInput = {
+  settings: oneSlotSettings,
+  students: tightStudents,
+  availability: [{ day: 'Mon', start: '9:00 AM', end: '9:30 AM', pattern: '' }],
+  grades: [],
+  constraints: [],
+  scheduleLog: []
+};
+const unlockedRun = eng.runSchedulingEngine(unlockRescueInput);
+const unlockedAnnHost = (unlockedRun.scheduled || []).find(s =>
+  s.members.some(m => m.id === 'ann') && s.members.some(m => m.id === 'bob')
+);
+assert(
+  'Tight calendar auto-groups when host is unlocked',
+  !!unlockedAnnHost || (unlockedRun.rescuedStudentCount || 0) > 0,
+  'rescued=' + unlockedRun.rescuedStudentCount + ' scheduled=' + JSON.stringify((unlockedRun.scheduled || []).map(s => s.members.map(m => m.id)))
+);
+
+const lockedHostInput = {
+  settings: oneSlotSettings,
+  students: tightStudents,
+  availability: [{ day: 'Mon', start: '9:00 AM', end: '9:30 AM', pattern: '' }],
+  grades: [],
+  constraints: [],
+  scheduleLog: [{
+    studentId: 'ann', name: 'Ann A', grade: '3', groupId: 'EDIT-GROUP-1', week: 'Every Week',
+    day: 'Mon', start: '9:00 AM', end: '9:30 AM', duration: 30, teacher: '', locked: 'Yes'
+  }]
+};
+const lockedRun = eng.runSchedulingEngine(lockedHostInput);
+const bobJoinedLocked = (lockedRun.scheduled || []).some(s =>
+  s.members.some(m => m.id === 'ann') && s.members.some(m => m.id === 'bob')
+);
+assert('Locked host blocks auto-group rescue', !bobJoinedLocked && (lockedRun.rescuedStudentCount || 0) === 0,
+  'rescued=' + lockedRun.rescuedStudentCount + ' ' + JSON.stringify((lockedRun.scheduled || []).map(s => ({ locked: s.locked, ids: s.members.map(m => m.id) }))));
+
 console.log('\n--- ' + passed + ' passed, ' + failed + ' failed ---\n');
 process.exit(failed ? 1 : 0);

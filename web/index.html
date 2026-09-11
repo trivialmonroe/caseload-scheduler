@@ -530,6 +530,11 @@ let undoSnapshot = null;
 let editUndoStack = [];
 let editRedoStack = [];
 let showPrintPanel = false;
+let showCreateSessionPanel = false;
+let createSessionDraft = null;
+let offDayDay = 'Mon';
+let offDayWeek = 1;
+let offDayDuration = 30;
 let compactCalendar = false;
 let dragState = null; // { index, keys: {'Mon|480': true}, weekLabel }
 let suppressSessionClick = false;
@@ -737,7 +742,7 @@ function snapshotForEdit() {
 }
 
 function beginEdit(label) {
-  if (!(state.scheduleLog || []).length && label !== 'Lock') return;
+  if (!(state.scheduleLog || []).length && label !== 'Lock' && label !== 'Create session') return;
   editUndoStack.push(Object.assign({ label: label || 'Edit' }, snapshotForEdit()));
   if (editUndoStack.length > 40) editUndoStack.shift();
   editRedoStack = [];
@@ -1296,6 +1301,7 @@ function sessionPopoverHtml() {
   html += `</details>
     <div class="card-actions">
       <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
+      ${mates.length > 1 ? '<button type="button" class="ghost" onclick="splitSessionToIndividuals()">Split group</button>' : ''}
     </div></aside>`;
   return html;
 }
@@ -1346,20 +1352,56 @@ function removeFromSession(studentId) {
   const row = state.scheduleLog[altFor];
   const mates = sessionMateRows(state.scheduleLog, row);
   if (mates.length <= 1) { setStatus('Cannot remove the only member.', 'bad'); return; }
+  const removedStudent = state.students.find(s => String(s.id) === String(studentId));
+  const markNoGroup = removedStudent && !removedStudent.noGroup &&
+    confirm('Remove ' + (removedStudent.firstName || 'this student') + ' from the group?\n\nOK = also mark them No Group so generate will not auto-group them again.\nCancel = remove only (remaining session will be locked so they cannot be re-added here).');
   beginEdit('Remove member');
+  const slotKey = sessionSlotKey(row);
   const idx = state.scheduleLog.findIndex(r =>
-    String(r.studentId) === String(studentId) && sessionSlotKey(r) === sessionSlotKey(row)
+    String(r.studentId) === String(studentId) && sessionSlotKey(r) === slotKey
   );
   if (idx < 0) return;
   const name = state.scheduleLog[idx].name;
   state.scheduleLog.splice(idx, 1);
+  // Close the remaining composition: lock mates + convert AUTO-GROUP → EDIT-GROUP
+  const remaining = state.scheduleLog.filter(r => sessionSlotKey(r) === slotKey);
+  let gid = '';
+  remaining.forEach(r => {
+    r.locked = 'Yes';
+    const g = String(r.groupId || '');
+    if (g.indexOf('AUTO-GROUP-') === 0) {
+      if (!gid) gid = 'EDIT-GROUP-' + Date.now().toString(36).toUpperCase();
+      r.groupId = gid;
+    }
+  });
+  if (markNoGroup && removedStudent) {
+    removedStudent.noGroup = true;
+    persistCaseload();
+  }
   if (altFor === idx) {
-    const next = state.scheduleLog.findIndex(r => sessionSlotKey(r) === sessionSlotKey(row));
+    const next = state.scheduleLog.findIndex(r => sessionSlotKey(r) === slotKey);
     altFor = next >= 0 ? next : null;
   } else if (altFor > idx) {
     altFor -= 1;
   }
-  refreshLiveReview('Removed ' + name + ' from the session.');
+  refreshLiveReview('Removed ' + name + '. Remaining session locked' + (markNoGroup ? '; marked No Group' : '') + '.');
+  render();
+}
+
+function splitSessionToIndividuals() {
+  if (altFor == null) return;
+  const row = state.scheduleLog[altFor];
+  const mates = sessionMateRows(state.scheduleLog, row);
+  if (mates.length <= 1) { setStatus('Session already has one student.', 'bad'); return; }
+  if (!confirm('Split this group into locked individual sessions at the same time?\n\nGenerate will not re-merge them while they stay locked. Move students afterward if you want different times.')) return;
+  beginEdit('Split group');
+  const slotKey = sessionSlotKey(row);
+  state.scheduleLog.forEach(r => {
+    if (sessionSlotKey(r) !== slotKey) return;
+    r.groupId = '';
+    r.locked = 'Yes';
+  });
+  refreshLiveReview('Split into ' + mates.length + ' locked individual sessions (same time).');
   render();
 }
 
@@ -1435,10 +1477,11 @@ function renderWeekBody() {
   const rev = reviewRows();
   const met = rev.filter(r => r.status === 'Met' || r.status === 'Over').length;
   if (!log.length) {
-    return `${wizardHtml()}<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
+    return `${wizardHtml()}${createSessionPanelHtml()}<p class="lede">Add students and hours, then generate. Or load the sample caseload to see the engine work.</p>
       <div class="row no-print">
         <button class="primary" onclick="state=sampleWorkspace();caseloadDirty=false;persist();generateNow()">Load sample &amp; generate</button>
         <button onclick="pickFile()">Open JSON / CSV</button>
+        <button type="button" onclick="openCreateSessionPanel()">Add session…</button>
       </div>`;
   }
   reconcileAllSessionSlots();
@@ -1456,6 +1499,7 @@ function renderWeekBody() {
       <button onclick="showAllWeeks=false;render()">${showAllWeeks ? 'Show 2-week snapshot' : '2-week snapshot'}</button>
       <button onclick="showAllWeeks=true;render()">All quarter weeks</button>
       <button type="button" class="${compactCalendar ? 'primary' : ''}" onclick="compactCalendar=!compactCalendar;render()">Compact calendar</button>
+      <button type="button" onclick="openCreateSessionPanel()">Add session…</button>
       <button onclick="openPrintOptions()">Print…</button>
       ${undoSnapshot ? `<button type="button" onclick="undoLastGenerate()">Undo generate</button>` : ''}
       <button onclick="exportCsv('schedule')">Export schedule CSV</button>
@@ -1465,7 +1509,7 @@ function renderWeekBody() {
       <span class="leg"><span class="swatch amber"></span> Swap — trade places</span>
       <span class="leg">🔒 Locked · <span class="sess-badge auto">Auto</span> Auto-grouped</span>
     </div>
-    ${printOptionsHtml()}
+    ${printOptionsHtml()}${createSessionPanelHtml()}
     <div class="row no-print">${cal.distinctGrades.map(g => `<span class="pill" style="background:${cal.gradeColors[g].bg};color:${cal.gradeColors[g].text}">Grade ${esc(g)}</span>`).join('')}</div>`;
   if (printOpts.coverage) {
     html += `<div class="print-only card"><h3>Coverage</h3><table><thead><tr><th>Student</th><th>Required</th><th>Placed</th><th>Status</th></tr></thead><tbody>` +
@@ -1903,10 +1947,134 @@ function renderAlts() {
   return html + '</div><button class="ghost" onclick="altFor=null;render()">Close</button></div>';
 }
 
+
+function openCreateSessionPanel(prefill) {
+  showCreateSessionPanel = true;
+  const s = (state.students || []).find(x => String(x.status || 'Active').toLowerCase() === 'active') || {};
+  createSessionDraft = Object.assign({
+    studentId: s.id || '',
+    day: 'Mon',
+    start: '9:00 AM',
+    duration: Number(state.settings.minSessionLength) || 30,
+    week: 'Every Week',
+    locked: true,
+    ignoreProviderAvailability: false
+  }, prefill || {});
+  scheduleTab = 'week';
+  altFor = null;
+  render();
+}
+
+function createSessionPanelHtml() {
+  if (!showCreateSessionPanel || !createSessionDraft) return '';
+  const d = createSessionDraft;
+  const students = (state.students || []).filter(s => String(s.status || 'Active').toLowerCase() === 'active');
+  const built = typeof buildSettings === 'function' ? buildSettings(state.settings) : state.settings;
+  const weekNums = (built && built.weeksList && built.weeksList.length)
+    ? built.weeksList
+    : Array.from({ length: (state.settings.weeksPerQuarter || 9) }, (_, i) => i + 1);
+  const weeks = ['Every Week'].concat(weekNums.map(w => (String(w).indexOf('Week') === 0 ? String(w) : ('Week ' + w))));
+  return `<div class="card print-panel no-print" id="create-session-panel">
+    <h3>Add a session</h3>
+    <p class="meta">Place one student on a day/time, then lock it so generate keeps it. Choose <b>Every Week</b> to recur.</p>
+    <div class="form-grid">
+      <label>Student<select id="cs-student">${students.map(s =>
+        `<option value="${esc(s.id)}" ${String(s.id)===String(d.studentId)?'selected':''}>${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select></label>
+      <label>Day<select id="cs-day">${DAYS.map(day =>
+        `<option value="${day}" ${d.day===day?'selected':''}>${day}</option>`).join('')}</select></label>
+      <label>Start<input id="cs-start" type="time" value="${esc(toTimeInput(d.start))}"></label>
+      <label>Length (min)<input id="cs-duration" type="number" min="5" step="5" value="${esc(d.duration)}"></label>
+      <label>Week<select id="cs-week">${weeks.map(w =>
+        `<option value="${esc(w)}" ${d.week===w?'selected':''}>${esc(w)}</option>`).join('')}</select></label>
+      <label class="chk" style="align-self:end"><input id="cs-locked" type="checkbox" ${d.locked?'checked':''}> Lock after create</label>
+      <label class="chk" style="grid-column:1/-1"><input id="cs-ignore-avail" type="checkbox" ${d.ignoreProviderAvailability?'checked':''}> Ignore my usual hours (for make-up / off days)</label>
+    </div>
+    <div class="card-actions">
+      <button type="button" class="primary" onclick="submitCreateSession()">Create session</button>
+      <button type="button" class="ghost" onclick="showCreateSessionPanel=false;createSessionDraft=null;render()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function submitCreateSession() {
+  const studentId = document.getElementById('cs-student').value;
+  const day = document.getElementById('cs-day').value;
+  const start = fromTimeInput(document.getElementById('cs-start').value);
+  const duration = Number(document.getElementById('cs-duration').value);
+  const week = document.getElementById('cs-week').value;
+  const locked = document.getElementById('cs-locked').checked;
+  const ignoreProviderAvailability = document.getElementById('cs-ignore-avail').checked;
+  const result = createManualSession(engineInput(), {
+    studentId, day, start, duration, week, locked, ignoreProviderAvailability
+  });
+  if (!result.ok) {
+    if (result.needsIgnoreAvailability && !ignoreProviderAvailability) {
+      if (confirm(result.error + '\n\nCreate anyway by ignoring usual hours?')) {
+        document.getElementById('cs-ignore-avail').checked = true;
+        return submitCreateSession();
+      }
+    }
+    setStatus(result.error, 'bad');
+    return;
+  }
+  if (result.warning && !confirm(result.warning + '\n\nCreate anyway?')) return;
+  beginEdit('Create session');
+  state.scheduleLog = (state.scheduleLog || []).concat([result.row]);
+  showCreateSessionPanel = false;
+  createSessionDraft = null;
+  altFor = state.scheduleLog.length - 1;
+  refreshLiveReview('Created session for ' + result.row.name + (locked ? ' (locked)' : '') + '.');
+  render();
+}
+
+function offDayPlannerHtml() {
+  const data = computeOffDayCandidates(engineInput(), offDayDay, {
+    weekNum: offDayWeek,
+    duration: offDayDuration
+  });
+  let html = `<div class="card no-print">
+    <h3>Off-day planner</h3>
+    <p class="meta">See who could be seen on a day you don’t usually work — uses your typical hours from other days, keeps grade/student blackouts, and ignores that this weekday is normally off.</p>
+    <div class="row">
+      <label>Day <select onchange="offDayDay=this.value;render()">${DAYS.map(d =>
+        `<option value="${d}" ${offDayDay===d?'selected':''}>${d}</option>`).join('')}</select></label>
+      <label>Week <input type="number" min="1" max="${state.settings.weeksPerQuarter||9}" value="${offDayWeek}" style="width:72px"
+        onchange="offDayWeek=Number(this.value)||1;render()"></label>
+      <label>Session length <input type="number" min="5" step="5" value="${offDayDuration}" style="width:72px"
+        onchange="offDayDuration=Number(this.value)||30;render()"> min</label>
+    </div>`;
+  if (data.error) {
+    html += `<p class="meta">${esc(data.error)}</p></div>`;
+    return html;
+  }
+  html += `<p class="meta">${data.normallyWorks ? 'You already have availability this day.' : 'You normally do not work this day.'}
+    Typical window: ${(data.typicalHours||[]).map(h => esc(h.start)+'–'+esc(h.end)).join(', ') || '—'}.
+    ${data.candidates.length} student(s) have at least one open slot.</p>`;
+  if (!data.candidates.length) {
+    html += '<p class="lede">Nobody is free in that window (blackouts or existing bookings).</p></div>';
+    return html;
+  }
+  html += `<table><thead><tr><th>Student</th><th>Coverage</th><th>Open slots</th><th></th></tr></thead><tbody>`;
+  data.candidates.forEach(c => {
+    const samples = (c.sampleSlots || []).slice(0, 3).map(s =>
+      `<button type="button" class="chip" onclick="openCreateSessionPanel({studentId:'${esc(c.studentId)}',day:'${offDayDay}',start:'${esc(s.startLabel)}',duration:${offDayDuration},week:'Week ${offDayWeek}',locked:true,ignoreProviderAvailability:true})">${esc(s.startLabel)}</button>`
+    ).join(' ');
+    html += `<tr class="${c.status==='Under'?'under':''}">
+      <td>${esc(c.name)} <span class="meta">Gr ${esc(c.grade)}${c.noGroup?' · No Group':''}</span></td>
+      <td><span class="pill ${c.status==='Under'?'bad':(c.status==='Over'?'warn':'ok')}">${esc(c.status)} · ${c.scheduled}/${c.required}</span></td>
+      <td>${c.slotCount} <span class="chip-row" style="display:inline">${samples}</span></td>
+      <td><button type="button" class="ghost" onclick="openCreateSessionPanel({studentId:'${esc(c.studentId)}',day:'${offDayDay}',duration:${offDayDuration},week:'Week ${offDayWeek}',locked:true,ignoreProviderAvailability:true})">Add session…</button></td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
 function renderOpenBody() {
   const data = computeOpenSlots(engineInput());
-  if (data.error) return `<p class="lede">${esc(data.error)}</p>`;
-  let html = `<p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
+  let html = offDayPlannerHtml();
+  if (data.error) return html + `<p class="lede">${esc(data.error)}</p>`;
+  html += `<p class="lede">Capacity by grade — independent of who is already booked. Green is usable time.</p>`;
   html += '<div class="open-grids">';
   data.blocks.forEach(b => {
     html += `<div class="card"><h3>Grade ${esc(b.grade)}${data.hasAlternating ? ' · pattern ' + b.pattern : ''} <span class="meta">${b.openMinutes} open min / week</span></h3>

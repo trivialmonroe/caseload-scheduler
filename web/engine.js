@@ -459,6 +459,9 @@ function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandi
   if (student.noGroup) return null;
   const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
   const candidates = hostCandidates.filter(entry => {
+    // Locked composition is closed — removing a student and locking the rest
+    // must not let auto-group rescue put them back on regenerate.
+    if (entry.locked) return false;
     if (entry.members.some(m => m.id === student.id || m.noGroup)) return false;
     if (entry.members.length >= settings.maxGroupSize) return false;
     const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;
@@ -859,31 +862,222 @@ function canAddStudentToSession(input, logRow, studentId) {
   };
 }
 
-function applySettingsAliases(settings) { return settings; }
+/** Typical provider hours across the week — used when planning an off day. */
+function typicalProviderWindows(availByPattern) {
+  let windows = [];
+  ['ALL', 'A', 'B'].forEach(p => {
+    DAYS.forEach(d => {
+      windows = windows.concat(availByPattern[p][d] || []);
+    });
+  });
+  return mergeOverlapping(windows);
+}
 
-const _buildSettingsOrig = buildSettings;
-buildSettings = function(raw) { return applySettingsAliases(_buildSettingsOrig(raw)); };
+/**
+ * Create a brand-new session row for one student (manual place + optional lock/recur).
+ * spec: { studentId, day, start, end?, duration?, week?, locked?, ignoreProviderAvailability? }
+ */
+function createManualSession(input, spec) {
+  const settings = buildSettings(input.settings);
+  const students = loadStudents(input.students);
+  const student = students.find(s => String(s.id) === String(spec.studentId));
+  if (!student) return { ok: false, error: 'Student not found or inactive.' };
 
-const _loadStudentsOrig = loadStudents;
-loadStudents = function(rows) {
-  return _loadStudentsOrig((rows || []).map(s => Object.assign({}, s, {
-    firstName: s.firstName || s.firstName || '',
-    lastName: s.lastName || s.lastName || '',
-    serviceType: s.serviceType || s.serviceType || 'Individual',
-    groupId: s.groupId || s.groupId || '',
-    noGroup: s.noGroup,
-    frequencyType: s.frequencyType || s.frequencyType || 'Weekly',
-    minutesPerWeek: s.minutesPerWeek || s.minutesPerWeek || 0,
-    preferredSessionLength: s.preferredSessionLength || s.preferredSessionLength || '',
-    sessionsPerQuarter: s.sessionsPerQuarter || s.sessionsPerQuarter || '',
-    quarterlySessionLength: s.quarterlySessionLength || s.quarterlySessionLength || '',
-    teacher: s.teacher || s.teacher || '',
-    fixedDay: s.fixedDay || s.fixedDay || '',
-    fixedStart: s.fixedStart || s.fixedStart || '',
-    notes: s.notes || '',
-  })));
-};
+  const day = normalizeScheduleDay(spec.day);
+  if (!day || DAYS.indexOf(day) < 0) return { ok: false, error: 'Pick a valid school day.' };
 
+  let start;
+  try { start = timeStrToMinutes(spec.start); } catch (e) { return { ok: false, error: 'Bad start time.' }; }
+
+  let duration = Number(spec.duration);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    if (spec.end) {
+      try { duration = timeStrToMinutes(spec.end) - start; } catch (e) { duration = 0; }
+    } else {
+      duration = student.preferredSessionLength || settings.minSessionLength;
+    }
+  }
+  duration = Math.round(duration / settings.slotIncrement) * settings.slotIncrement;
+  if (duration < settings.minSessionLength) return { ok: false, error: 'Duration is under the minimum session length (' + settings.minSessionLength + ' min).' };
+  if (duration > settings.maxSessionLength) return { ok: false, error: 'Duration exceeds the maximum session length (' + settings.maxSessionLength + ' min).' };
+  const end = start + duration;
+
+  const weekText = normalizeWeekLabel(spec.week == null || spec.week === '' ? 'Every Week' : spec.week);
+  const weekNum = weekText === 'Every Week' ? ALL_WEEKS_KEY : (Number(String(weekText).replace(/[^0-9]/g, '')) || 1);
+  const weeksToCheck = weeksForEntry(weekNum, settings);
+
+  const availByPattern = loadProviderAvailability(input.availability);
+  const gradeBlackouts = loadGradeBlackouts(input.grades);
+  const studentConstraints = loadStudentConstraints(input.constraints);
+  const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
+  if ((blackouts[day] || []).some(b => overlaps(start, end, b.start, b.end))) {
+    return { ok: false, error: 'Conflicts with a grade or student blackout.' };
+  }
+
+  if (!spec.ignoreProviderAvailability) {
+    const providerAvail = effectiveAvailability(weeksToCheck, availByPattern, settings);
+    const fits = (providerAvail[day] || []).some(w => start >= w.start && end <= w.end);
+    if (!fits) {
+      return {
+        ok: false,
+        error: 'Outside your usual availability for that day. Turn on “Ignore my usual hours” to place anyway (e.g. a make-up day).',
+        needsIgnoreAvailability: true
+      };
+    }
+  }
+
+  const busy = (input.scheduleLog || []).some(r => {
+    if (String(r.studentId) !== String(student.id)) return false;
+    if (normalizeScheduleDay(r.day) !== day) return false;
+    const rWeek = normalizeWeekLabel(r.week);
+    const sameWeek = rWeek === weekText || rWeek === 'Every Week' || weekText === 'Every Week';
+    if (!sameWeek) return false;
+    try { return overlaps(start, end, timeStrToMinutes(r.start), timeStrToMinutes(r.end)); }
+    catch (e) { return false; }
+  });
+  if (busy) return { ok: false, error: 'Student already has a session overlapping that time.' };
+
+  // Provider double-booking check against existing log (any student).
+  const providerBusy = (input.scheduleLog || []).some(r => {
+    if (normalizeScheduleDay(r.day) !== day) return false;
+    const rWeek = normalizeWeekLabel(r.week);
+    const sameWeek = rWeek === weekText || rWeek === 'Every Week' || weekText === 'Every Week';
+    if (!sameWeek) return false;
+    if (String(r.studentId) === String(student.id)) return false;
+    // Same slot with another student is a group — allowed unless caller forbids
+    try {
+      const rs = timeStrToMinutes(r.start), re = timeStrToMinutes(r.end);
+      if (rs === start && re === end) return false;
+      return overlaps(start, end, rs, re);
+    } catch (e) { return false; }
+  });
+  if (providerBusy) return { ok: false, error: 'Overlaps another session at a different time on your calendar.' };
+
+  const locked = spec.locked === false ? '' : 'Yes';
+  const row = {
+    studentId: student.id,
+    name: student.firstName + ' ' + student.lastName,
+    grade: student.grade,
+    groupId: '',
+    week: weekText,
+    day: day,
+    start: minutesToTimeStr(start),
+    end: minutesToTimeStr(end),
+    duration: duration,
+    teacher: student.teacher || '',
+    locked: locked
+  };
+
+  const previewLog = (input.scheduleLog || []).concat([row]);
+  const after = reviewFromScheduleLog(Object.assign({}, input, { scheduleLog: previewLog })).find(r => r.id === student.id);
+  return {
+    ok: true,
+    row: row,
+    after: after,
+    warning: after && after.status === 'Over'
+      ? (student.firstName + ' would be over minutes (' + after.scheduled + '/' + after.required + ').')
+      : ''
+  };
+}
+
+/**
+ * Who could be seen on a given day if the clinician worked — ignores whether
+ * that day is normally in MyAvailability, but keeps grade/student blackouts
+ * and existing bookings. Uses typical hours from other availability rows.
+ */
+function computeOffDayCandidates(input, day, opts) {
+  opts = opts || {};
+  const settings = buildSettings(input.settings);
+  const dayNorm = normalizeScheduleDay(day);
+  if (!dayNorm || DAYS.indexOf(dayNorm) < 0) return { error: 'Pick a valid school day.', candidates: [] };
+
+  const availByPattern = loadProviderAvailability(input.availability);
+  const gradeBlackouts = loadGradeBlackouts(input.grades);
+  const studentConstraints = loadStudentConstraints(input.constraints);
+  const students = loadStudents(input.students);
+  const weekNum = opts.weekNum ? Number(opts.weekNum) : 1;
+  const duration = Math.max(
+    settings.minSessionLength,
+    Number(opts.duration) || settings.minSessionLength
+  );
+
+  const typical = typicalProviderWindows(availByPattern);
+  if (!typical.length) {
+    return { error: 'Add some availability hours first (any day) so we know your usual window.', candidates: [], typicalHours: [] };
+  }
+
+  const realAvail = availabilityForWeek(weekNum, availByPattern, settings);
+  const normallyWorks = ((realAvail[dayNorm] || []).length > 0);
+
+  // Bookings that day / week from the live log
+  const bookings = [];
+  (input.scheduleLog || []).forEach(r => {
+    if (normalizeScheduleDay(r.day) !== dayNorm) return;
+    const rWeek = normalizeWeekLabel(r.week);
+    const weekText = weekNum ? ('Week ' + weekNum) : 'Every Week';
+    const sameWeek = rWeek === 'Every Week' || rWeek === weekText || !weekNum;
+    if (!sameWeek) return;
+    try {
+      bookings.push({
+        studentId: String(r.studentId),
+        start: timeStrToMinutes(r.start),
+        end: timeStrToMinutes(r.end)
+      });
+    } catch (e) {}
+  });
+
+  const review = reviewFromScheduleLog(input);
+  const candidates = [];
+
+  students.forEach(student => {
+    const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
+    const dayBlackouts = blackouts[dayNorm] || [];
+    const slots = [];
+    typical.forEach(win => {
+      for (let start = win.start; start + duration <= win.end; start += settings.slotIncrement) {
+        const end = start + duration;
+        if (dayBlackouts.some(b => overlaps(start, end, b.start, b.end))) continue;
+        const selfBusy = bookings.some(b => String(b.studentId) === String(student.id) && overlaps(start, end, b.start, b.end));
+        if (selfBusy) continue;
+        const providerBusy = bookings.some(b =>
+          String(b.studentId) !== String(student.id) &&
+          !(b.start === start && b.end === end) &&
+          overlaps(start, end, b.start, b.end)
+        );
+        if (providerBusy) continue;
+        slots.push({ start: start, end: end, startLabel: minutesToTimeStr(start), endLabel: minutesToTimeStr(end) });
+      }
+    });
+    if (!slots.length) return;
+    const cov = review.find(r => r.id === student.id) || { scheduled: 0, required: 0, status: 'Under' };
+    candidates.push({
+      studentId: student.id,
+      name: student.firstName + ' ' + student.lastName,
+      grade: student.grade,
+      status: cov.status,
+      scheduled: cov.scheduled,
+      required: cov.required,
+      remaining: Math.max(0, (cov.required || 0) - (cov.scheduled || 0)),
+      slotCount: slots.length,
+      sampleSlots: slots.slice(0, 8),
+      noGroup: !!student.noGroup
+    });
+  });
+
+  candidates.sort((a, b) => {
+    const rank = s => (s === 'Under' ? 0 : (s === 'Met' ? 1 : 2));
+    return rank(a.status) - rank(b.status) || b.remaining - a.remaining || a.name.localeCompare(b.name);
+  });
+
+  return {
+    day: dayNorm,
+    weekNum: weekNum,
+    duration: duration,
+    normallyWorks: normallyWorks,
+    typicalHours: typical.map(w => ({ start: minutesToTimeStr(w.start), end: minutesToTimeStr(w.end) })),
+    candidates: candidates
+  };
+}
 
 // ── Open slots, alternatives, calendar model ────────────────────────────────
 function computeOpenSlots(input) {
@@ -1832,6 +2026,7 @@ if (typeof module !== 'undefined' && module.exports) {
     sessionMateRows, sessionKeyFromLogRow, sessionSlotKey, canonicalGroupIdForSlot, unifySessionGroupIds, reviewFromScheduleLog,
     scheduledEntriesFromLog, canAddStudentToSession, studentMinuteImpact, buildScheduleReview,
     twoWeekCycleWeek, establishedTwoWeekCycleSlot, filterCandidatesForTwoWeekCycle,
-    validateSessionExtension, findSessionExtensionOptions, previewLogWithSessionDuration
+    validateSessionExtension, findSessionExtensionOptions, previewLogWithSessionDuration,
+    createManualSession, computeOffDayCandidates, typicalProviderWindows
   };
 }
