@@ -190,6 +190,9 @@ function tryJoinCompatibleHost(student, sessionLength, needsEveryWeek, hostCandi
   const blackouts = getStudentBlackouts(student, gradeBlackouts, studentConstraints);
 
   const candidates = hostCandidates.filter(entry => {
+    // Locked composition is closed — removing a student and locking the rest
+    // must not let auto-group rescue put them back on regenerate.
+    if (entry.locked) return false;
     if (entry.members.some(m => m.id === student.id || m.noGroup)) return false;     // not already in it / host opted out of grouping
     if (entry.members.length >= settings.maxGroupSize) return false;    // already at the configured headcount cap
     const hostIsEveryWeek = entry.week === ALL_WEEKS_KEY;
@@ -384,13 +387,31 @@ function generateSchedule() {
   // an auto-group is fundamentally an Individual, so each gets their own slot
   // decremented independently.
   lockedSessions.forEach(ls => {
-    const members = ls.studentIds.map(id => studentsById[id]).filter(Boolean);
+    let members = ls.studentIds.map(id => studentsById[id]).filter(Boolean);
     if (!members.length) return; // student no longer active/exists since this was locked
+
+    // Preserve EDIT-SOLO / EDIT-GROUP / AUTO-GROUP labels from the locked log so
+    // writing Schedule_Log does not re-stamp caseload Group IDs (e.g. G1) after a split.
+    const lockGid = String(ls.reqId || '');
+    const keepLockGroupId = lockGid.indexOf('EDIT-SOLO-') === 0 ||
+      lockGid.indexOf('EDIT-GROUP-') === 0 ||
+      lockGid.indexOf('AUTO-GROUP-') === 0;
+    if (keepLockGroupId) {
+      members = members.map(m => Object.assign({}, m, { groupId: lockGid }));
+    }
 
     const naturalReqIds = new Set();
     members.forEach(m => {
-      const natural = (m.serviceType.toLowerCase() === 'group' && m.groupId) ? m.groupId : m.id;
-      naturalReqIds.add(natural);
+      if (lockGid.indexOf('EDIT-SOLO-') === 0) {
+        naturalReqIds.add(m.id);
+        const caseload = studentsById[m.id];
+        if (caseload && caseload.serviceType.toLowerCase() === 'group' && caseload.groupId) {
+          naturalReqIds.add(caseload.groupId);
+        }
+      } else {
+        const natural = (m.serviceType.toLowerCase() === 'group' && m.groupId) ? m.groupId : m.id;
+        naturalReqIds.add(natural);
+      }
     });
     const duration = ls.end - ls.start;
     naturalReqIds.forEach(reqId => {
@@ -414,7 +435,9 @@ function generateSchedule() {
     reqDaysUsed[ls.reqId][weekKey].push(ls.day);
 
     scheduled.push({
-      reqId: ls.reqId, members, week: ls.week, day: ls.day, start: ls.start, end: ls.end,
+      reqId: ls.reqId,
+      groupId: keepLockGroupId ? lockGid : ((members[0] && members[0].groupId) || ''),
+      members, week: ls.week, day: ls.day, start: ls.start, end: ls.end,
       sessionIndex: 0, totalSessions: 0, locked: true
     });
   });
