@@ -2014,7 +2014,7 @@ function createSessionPanelHtml() {
   const weeks = ['Every Week'].concat(weekNums.map(w => (String(w).indexOf('Week') === 0 ? String(w) : ('Week ' + w))));
   return `<div class="card print-panel no-print" id="create-session-panel">
     <h3>Add a session</h3>
-    <p class="meta">Place one student on a day/time, then lock it so generate keeps it. Choose <b>Every Week</b> to recur.</p>
+    <p class="meta">Place one student on a day/time, then lock it so generate keeps it. Choose <b>Every Week</b> to recur. To remove a placement later, open it and click <b>Delete session</b>.</p>
     <div class="form-grid">
       <label>Student<select id="cs-student">${students.map(s =>
         `<option value="${esc(s.id)}" ${String(s.id)===String(d.studentId)?'selected':''}>${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select></label>
