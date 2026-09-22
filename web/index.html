@@ -1302,6 +1302,7 @@ function sessionPopoverHtml() {
     <div class="card-actions">
       <button type="button" onclick="toggleLock(${altFor})">${locked ? 'Unlock' : 'Lock this time'}</button>
       ${mates.length > 1 ? '<button type="button" class="ghost" onclick="splitSessionToIndividuals()">Split group</button>' : ''}
+      <button type="button" class="ghost danger" onclick="deleteSession()">Delete session</button>
     </div></aside>`;
   return html;
 }
@@ -1402,6 +1403,35 @@ function splitSessionToIndividuals() {
     r.locked = 'Yes';
   });
   refreshLiveReview('Split into ' + mates.length + ' locked individual sessions (same time).');
+  render();
+}
+
+/** Remove a whole session (all mates at this slot) from the schedule log. Works on locked rows. */
+function deleteSession(index) {
+  const i = index != null ? Number(index) : altFor;
+  if (i == null || i < 0 || !state.scheduleLog[i]) return;
+  const row = state.scheduleLog[i];
+  const mates = sessionMateRows(state.scheduleLog, row);
+  if (!mates.length) return;
+  const names = mates.map(m => m.name || m.studentId).join(', ');
+  const locked = mates.some(m => String(m.locked || '').toLowerCase() === 'yes');
+  const whenLabel = (normalizeWeekLabel(row.week || '') || 'Every Week') + ' · ' + row.day + ' ' + row.start + '–' + row.end;
+  let msg = mates.length > 1
+    ? ('Delete this session for ' + names + '?\n\n' + whenLabel + '\nAll ' + mates.length + ' students at this time will be removed from the schedule.')
+    : ('Delete this session for ' + names + '?\n\n' + whenLabel);
+  if (locked) msg += '\n\nThis session is locked — delete anyway?';
+  msg += '\n\nUse Undo if you change your mind.';
+  if (!confirm(msg)) return;
+  beginEdit('Delete session');
+  const removeKeys = {};
+  mates.forEach(m => {
+    removeKeys[sessionSlotKey(m) + '|' + String(m.studentId).trim()] = true;
+  });
+  state.scheduleLog = (state.scheduleLog || []).filter(r =>
+    !removeKeys[sessionSlotKey(r) + '|' + String(r.studentId).trim()]
+  );
+  altFor = null;
+  refreshLiveReview('Deleted session for ' + names + '.');
   render();
 }
 
@@ -1909,7 +1939,7 @@ function clearLocks() {
 
 function renderSessionsBody() {
   const rows = state.scheduleLog || [];
-  let html = `<p class="lede">Lock a row to keep it on the next generate. Find other times without reshuffling everyone.</p>
+  let html = `<p class="lede">Lock a row to keep it on the next generate. Delete removes it from the schedule (including locked / manually placed sessions). Undo restores the last edit.</p>
     <div class="row no-print">
       <button onclick="clearScheduleKeepLocks()">Clear unlocked</button>
       <button onclick="clearLocks()">Clear all locks</button>
@@ -1925,7 +1955,10 @@ function renderSessionsBody() {
       <td>${esc(r.name)}<div class="meta">${esc(r.studentId)} · Gr ${esc(r.grade)}</div></td>
       <td>${esc(r.week)} ${esc(r.day)} ${esc(r.start)}–${esc(r.end)} <span class="meta">${esc(r.duration)} min</span></td>
       <td>${esc(r.groupId)}</td><td>${esc(r.teacher)}</td>
-      <td><button class="ghost" onclick="openAlts(${i})">Other times</button></td></tr>`;
+      <td class="row" style="gap:6px;flex-wrap:wrap">
+        <button class="ghost" onclick="openAlts(${i})">Other times</button>
+        <button class="ghost danger" onclick="deleteSession(${i})">Delete</button>
+      </td></tr>`;
   });
   html += '</tbody></table>';
   if (altFor != null) html += renderAlts();
@@ -1981,7 +2014,7 @@ function createSessionPanelHtml() {
   const weeks = ['Every Week'].concat(weekNums.map(w => (String(w).indexOf('Week') === 0 ? String(w) : ('Week ' + w))));
   return `<div class="card print-panel no-print" id="create-session-panel">
     <h3>Add a session</h3>
-    <p class="meta">Place one student on a day/time, then lock it so generate keeps it. Choose <b>Every Week</b> to recur.</p>
+    <p class="meta">Place one student on a day/time, then lock it so generate keeps it. Choose <b>Every Week</b> to recur. To remove a placement later, open it and click <b>Delete session</b>.</p>
     <div class="form-grid">
       <label>Student<select id="cs-student">${students.map(s =>
         `<option value="${esc(s.id)}" ${String(s.id)===String(d.studentId)?'selected':''}>${esc(s.lastName)}, ${esc(s.firstName)}</option>`).join('')}</select></label>
