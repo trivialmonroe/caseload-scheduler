@@ -13,3 +13,12 @@ Open `index.html` in a browser (double-click, or serve this folder). No install,
 - Navigation is five screens: **Students** (caseload + per-student unavailable times), **Hours & grades**, **Week & coverage** (tabs: week, coverage, sessions, open slots), **Import / export**, **Settings**.
 
 `engine.js` must sit next to `index.html`.
+
+### Tests
+From the repo root (Node only, no npm install):
+
+```bash
+node web/run-tests.js
+```
+
+That runs import/edge cases (`adversarial.test.js`) plus schedule integrity regressions (`invariants.test.js`: overlaps, lock preservation, manual create, EDIT-SOLO splits, sample generate health).

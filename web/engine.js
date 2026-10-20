@@ -18,6 +18,11 @@ const DEFAULT_SETTINGS = {
   frontLoadFirstSessions: true,
 };
 
+/** Hard ceilings so AM/PM mix-ups and typo durations cannot create absurd sessions. */
+const SANITY_MAX_SESSION_MINUTES = 120;       // never allow a session longer than 2 hours
+const SANITY_WARN_AVAIL_SPAN_MINUTES = 600;   // availability window > 10 hours is suspicious
+const SANITY_WARN_BLACKOUT_SPAN_MINUTES = 240; // lunch/OT block > 4 hours is suspicious
+
 // ─── Data helpers (from DataHelpers.gs) ─────────────────────────────────────
 function timeStrToMinutes(t) {
   if (t instanceof Date) return t.getHours() * 60 + t.getMinutes();
@@ -70,10 +75,38 @@ function parseDayList(raw) {
 function buildSettings(raw) {
   const settings = Object.assign({}, DEFAULT_SETTINGS);
   if (raw) Object.assign(settings, raw);
+  settings.minSessionLength = Number(settings.minSessionLength) || DEFAULT_SETTINGS.minSessionLength;
+  settings.maxSessionLength = Number(settings.maxSessionLength) || DEFAULT_SETTINGS.maxSessionLength;
+  settings.slotIncrement = Number(settings.slotIncrement) || DEFAULT_SETTINGS.slotIncrement;
+  if (settings.minSessionLength < settings.slotIncrement) settings.minSessionLength = settings.slotIncrement;
+  // Cap max session at the hard sanity ceiling (guards AM/PM and settings typos).
+  if (settings.maxSessionLength > SANITY_MAX_SESSION_MINUTES) settings.maxSessionLength = SANITY_MAX_SESSION_MINUTES;
   if (settings.minSessionLength > settings.maxSessionLength) settings.minSessionLength = settings.maxSessionLength;
+  if (settings.slotIncrement > settings.minSessionLength) settings.slotIncrement = settings.minSessionLength;
   settings.weeksList = [];
   for (let w = 1; w <= settings.weeksPerQuarter; w++) settings.weeksList.push(w);
   return settings;
+}
+
+/**
+ * Parse a start/end pair. Returns { ok, start, end, span, error }.
+ * Used by caseload validation and UI guardrails.
+ */
+function parseTimeWindow(startVal, endVal) {
+  let start, end;
+  try { start = timeStrToMinutes(startVal); } catch (e) {
+    return { ok: false, start: null, end: null, span: 0, error: 'Bad start time.' };
+  }
+  try { end = timeStrToMinutes(endVal); } catch (e) {
+    return { ok: false, start: start, end: null, span: 0, error: 'Bad end time.' };
+  }
+  if (!(end > start)) {
+    return {
+      ok: false, start: start, end: end, span: 0,
+      error: 'End must be after start (check AM/PM).'
+    };
+  }
+  return { ok: true, start: start, end: end, span: end - start, error: '' };
 }
 
 function loadProviderAvailability(rows) {
@@ -81,7 +114,9 @@ function loadProviderAvailability(rows) {
   ['ALL', 'A', 'B'].forEach(key => DAYS.forEach(d => buckets[key][d] = []));
   (rows || []).forEach(r => {
     const days = parseDayList(r.day);
-    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end) };
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) return; // skip inverted / unreadable windows (surfaced by validateCaseload)
+    const entry = { start: win.start, end: win.end };
     const patternRaw = String(r.pattern || '').trim().toUpperCase();
     const bucket = (patternRaw === 'A' || patternRaw === 'B') ? patternRaw : 'ALL';
     days.forEach(day => buckets[bucket][day].push(entry));
@@ -144,7 +179,9 @@ function loadGradeBlackouts(rows) {
     const grade = String(r.grade).trim();
     const days = parseDayList(r.day);
     if (!map[grade]) { map[grade] = {}; DAYS.forEach(d => map[grade][d] = []); }
-    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end), reason: r.reason || 'Grade schedule' };
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) return;
+    const entry = { start: win.start, end: win.end, reason: r.reason || 'Grade schedule' };
     days.forEach(day => map[grade][day].push(entry));
   });
   return map;
@@ -156,7 +193,9 @@ function loadStudentConstraints(rows) {
     const id = String(r.studentId).trim();
     const days = parseDayList(r.day);
     if (!map[id]) { map[id] = {}; DAYS.forEach(d => map[id][d] = []); }
-    const entry = { start: timeStrToMinutes(r.start), end: timeStrToMinutes(r.end), reason: r.reason || 'Other service' };
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) return;
+    const entry = { start: win.start, end: win.end, reason: r.reason || 'Other service' };
     days.forEach(day => map[id][day].push(entry));
   });
   return map;
@@ -1757,7 +1796,218 @@ function validateCaseload(state) {
   });
   if (!(state.availability || []).length) issues.push('Add at least one availability window.');
   if (settings.minSessionLength > settings.maxSessionLength) issues.push('Min session length is greater than max.');
+  if (Number((state.settings || {}).maxSessionLength) > SANITY_MAX_SESSION_MINUTES) {
+    issues.push('Max session length cannot exceed ' + SANITY_MAX_SESSION_MINUTES +
+      ' minutes (2 hours). Cap it to avoid AM/PM duration mistakes.');
+  }
+
+  // Preferred / quarterly session lengths on students
+  students.forEach(s => {
+    if (String(s.status || 'Active').toLowerCase() !== 'active') return;
+    const label = String(s.id || '').trim() || (s.firstName + ' ' + s.lastName) || '(student)';
+    const pref = Number(s.preferredSessionLength);
+    if (Number.isFinite(pref) && pref > 0) {
+      if (pref > SANITY_MAX_SESSION_MINUTES) {
+        issues.push(label + ': preferred session length (' + pref +
+          ' min) exceeds the ' + SANITY_MAX_SESSION_MINUTES + '-minute sanity limit.');
+      } else if (pref > settings.maxSessionLength) {
+        issues.push(label + ': preferred session length (' + pref +
+          ' min) is above Max session length (' + settings.maxSessionLength + ').');
+      }
+    }
+    const qLen = Number(s.quarterlySessionLength);
+    if (Number.isFinite(qLen) && qLen > 0 && qLen > SANITY_MAX_SESSION_MINUTES) {
+      issues.push(label + ': quarterly session length (' + qLen +
+        ' min) exceeds the ' + SANITY_MAX_SESSION_MINUTES + '-minute sanity limit.');
+    }
+    if (s.fixedDay || s.fixedStart) {
+      if (!s.fixedDay || !s.fixedStart) {
+        issues.push(label + ': pinned time needs both a day and a start.');
+      } else if (!normalizeScheduleDay(s.fixedDay) || DAYS.indexOf(normalizeScheduleDay(s.fixedDay)) < 0) {
+        issues.push(label + ': pinned day is invalid.');
+      } else {
+        try { timeStrToMinutes(s.fixedStart); } catch (e) {
+          issues.push(label + ': pinned start time is invalid.');
+        }
+      }
+    }
+  });
+
+  // Availability windows — end after start; warn on huge spans (likely AM/PM typo)
+  (state.availability || []).forEach((r, idx) => {
+    const label = 'Hours row ' + (idx + 1);
+    const days = parseDayList(r.day);
+    if (!days.length) issues.push(label + ': pick at least one day.');
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) issues.push(label + ': ' + win.error);
+    else if (win.span > SANITY_WARN_AVAIL_SPAN_MINUTES) {
+      issues.push(label + ': availability spans ' + Math.round(win.span / 60) +
+        ' hours — check AM/PM (usual school days are shorter).');
+    }
+  });
+
+  // Grade blackouts
+  (state.grades || []).forEach((r, idx) => {
+    const label = 'Grade block ' + (idx + 1) + (r.grade ? ' (Gr ' + r.grade + ')' : '');
+    if (!String(r.grade || '').trim()) issues.push(label + ': missing grade.');
+    const days = parseDayList(r.day);
+    if (!days.length) issues.push(label + ': pick at least one day.');
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) issues.push(label + ': ' + win.error);
+    else if (win.span > SANITY_WARN_BLACKOUT_SPAN_MINUTES) {
+      issues.push(label + ': block is ' + Math.round(win.span / 60) +
+        ' hours long — check AM/PM (lunches/specials are usually under 4 hours).');
+    }
+  });
+
+  // Student OT / resource blocks
+  (state.constraints || []).forEach((r, idx) => {
+    const label = 'Student block ' + (idx + 1) + (r.studentId ? ' (' + r.studentId + ')' : '');
+    if (!String(r.studentId || '').trim()) issues.push(label + ': missing student ID.');
+    const days = parseDayList(r.day);
+    if (!days.length) issues.push(label + ': pick at least one day.');
+    const win = parseTimeWindow(r.start, r.end);
+    if (!win.ok) issues.push(label + ': ' + win.error);
+    else if (win.span > SANITY_WARN_BLACKOUT_SPAN_MINUTES) {
+      issues.push(label + ': block is ' + Math.round(win.span / 60) +
+        ' hours long — check AM/PM.');
+    }
+  });
+
   return issues;
+}
+
+/**
+ * Structural integrity checks on a live schedule log.
+ * Catches the kinds of "erratic" states users report: broken times, double-books,
+ * orphan rows, and duration mismatches. Returns { ok, errors, warnings }.
+ */
+function weeksOverlapLabels(weekA, weekB) {
+  const a = normalizeWeekLabel(weekA || '');
+  const b = normalizeWeekLabel(weekB || '');
+  if (a === 'Every Week' || b === 'Every Week') return true;
+  return a === b;
+}
+
+function validateScheduleLog(input) {
+  const errors = [];
+  const warnings = [];
+  const log = input && input.scheduleLog ? input.scheduleLog : [];
+  if (!log.length) return { ok: true, errors, warnings };
+
+  const activeIds = {};
+  try {
+    loadStudents(input.students || []).forEach(s => { activeIds[String(s.id)] = true; });
+  } catch (e) { /* ignore — caseload may be empty during partial imports */ }
+
+  const parsed = [];
+  log.forEach((r, idx) => {
+    const label = 'Row ' + (idx + 1) + (r.name ? ' (' + r.name + ')' : '');
+    const day = normalizeScheduleDay(r.day);
+    if (!day || DAYS.indexOf(day) < 0) {
+      errors.push(label + ': invalid day "' + (r.day || '') + '".');
+      return;
+    }
+    let start, end;
+    try {
+      start = timeStrToMinutes(r.start);
+      end = timeStrToMinutes(r.end);
+    } catch (e) {
+      errors.push(label + ': bad start/end time.');
+      return;
+    }
+    if (!(end > start)) {
+      errors.push(label + ': end must be after start (check AM/PM).');
+      return;
+    }
+    const span = end - start;
+    if (span > SANITY_MAX_SESSION_MINUTES) {
+      errors.push(label + ': session is ' + span + ' minutes — over the ' +
+        SANITY_MAX_SESSION_MINUTES + '-minute sanity limit (check AM/PM).');
+    }
+    const dur = Number(r.duration);
+    if (Number.isFinite(dur) && dur > 0 && Math.abs(dur - span) > 0) {
+      errors.push(label + ': duration (' + dur + ') does not match ' + span + ' min span.');
+    }
+    const week = normalizeWeekLabel(r.week || '');
+    if (!week) warnings.push(label + ': blank week (expected Every Week or Week N).');
+    const sid = String(r.studentId || '').trim();
+    if (!sid) errors.push(label + ': missing student ID.');
+    else if (Object.keys(activeIds).length && !activeIds[sid]) {
+      warnings.push(label + ': student ID "' + sid + '" is not an active caseload student.');
+    }
+    parsed.push({
+      idx: idx,
+      label: label,
+      studentId: sid,
+      day: day,
+      start: start,
+      end: end,
+      week: week || 'Every Week',
+      locked: String(r.locked || '').toLowerCase() === 'yes',
+      groupId: String(r.groupId || '').trim()
+    });
+  });
+
+  for (let i = 0; i < parsed.length; i++) {
+    for (let j = i + 1; j < parsed.length; j++) {
+      const a = parsed[i], b = parsed[j];
+      if (a.day !== b.day) continue;
+      if (!weeksOverlapLabels(a.week, b.week)) continue;
+      if (!overlaps(a.start, a.end, b.start, b.end)) continue;
+      const sameSlot = a.start === b.start && a.end === b.end;
+      if (a.studentId && a.studentId === b.studentId) {
+        errors.push(a.label + ' overlaps the same student in ' + b.label +
+          ' (' + a.day + ' ' + minutesToTimeStr(a.start) + '–' + minutesToTimeStr(a.end) + ').');
+      } else if (!sameSlot) {
+        errors.push(a.label + ' overlaps a different session at a different time (' + b.label +
+          ') — provider double-book.');
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors: errors, warnings: warnings };
+}
+
+/**
+ * After regenerate, every previously locked student/day/start/end must still appear.
+ * Returns missing lock descriptions (empty = ok).
+ */
+function missingPreservedLocks(beforeLog, afterLog) {
+  const missing = [];
+  const afterKeys = {};
+  (afterLog || []).forEach(r => {
+    if (String(r.locked || '').toLowerCase() !== 'yes') return;
+    try {
+      const key = [
+        String(r.studentId).trim(),
+        normalizeScheduleDay(r.day),
+        timeStrToMinutes(r.start),
+        timeStrToMinutes(r.end),
+        normalizeWeekLabel(r.week || '')
+      ].join('|');
+      afterKeys[key] = true;
+    } catch (e) {}
+  });
+  (beforeLog || []).forEach(r => {
+    if (String(r.locked || '').toLowerCase() !== 'yes') return;
+    try {
+      const key = [
+        String(r.studentId).trim(),
+        normalizeScheduleDay(r.day),
+        timeStrToMinutes(r.start),
+        timeStrToMinutes(r.end),
+        normalizeWeekLabel(r.week || '')
+      ].join('|');
+      if (!afterKeys[key]) {
+        missing.push((r.name || r.studentId) + ' @ ' + r.day + ' ' + r.start + '–' + r.end +
+          ' (' + (normalizeWeekLabel(r.week || '') || 'Every Week') + ')');
+      }
+    } catch (e) {
+      missing.push((r.name || r.studentId) + ' (unreadable locked row)');
+    }
+  });
+  return missing;
 }
 
 // ── CSV / JSON workspace ────────────────────────────────────────────────────
@@ -2074,7 +2324,9 @@ if (typeof window !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
+    DAYS, DEFAULT_SETTINGS, SANITY_MAX_SESSION_MINUTES, SANITY_WARN_AVAIL_SPAN_MINUTES,
+    SANITY_WARN_BLACKOUT_SPAN_MINUTES, buildSettings, parseTimeWindow, runSchedulingEngine, validateCaseload,
+    validateScheduleLog, missingPreservedLocks, weeksOverlapLabels,
     computeOpenSlots, findAlternativeSlots, findSwapCandidates, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     normalizeHeaderKey, csvRowGet, sheetNameToKind, importTableRows, applyWorkbookImports,

@@ -24,12 +24,15 @@ This repo ships **two products** that share a scheduling algorithm:
 - Individual students can be marked **No Group** so auto-group rescue / front-load joining never combines them with others.
 - Feature set vs Sheets: generate, coverage, session log with locks, alternate times, open-slot grids, printable week view, student form, validate, A/B hours, weekly + quarterly, groups, auto-group rescue.
 - Algorithm lives in `web/engine.js`. If you change placement rules, also update `apps-script/SchedulingEngine.gs` and `apps-script/DataHelpers.gs`.
+- **Tests (no install):** from repo root run `node web/run-tests.js` (runs adversarial + schedule-invariant suites). Individual files: `node web/adversarial.test.js`, `node web/invariants.test.js`.
+- `validateScheduleLog(input)` in `web/engine.js` checks live schedule integrity (bad times, student/provider overlaps, duration mismatches). The web UI surfaces the first integrity error after generate and after calendar edits. Prefer adding regression cases to `web/invariants.test.js` when fixing erratic user reports.
+- Sanity guardrails: sessions hard-capped at **120 minutes**; `validateCaseload` flags inverted time windows (end ≤ start), availability spans over **10 hours**, and grade/student blocks over **4 hours** (common AM/PM mistakes). Hours/grades/student-block editors show the same warnings on change.
 
 ### Google Apps Script version
 
 - Sources live in `apps-script/` (including `appsscript.json`, `StudentForm.html`, and `SessionEditing.gs` for move/swap/coverage parity).
 - No package manager, build, or automated tests for Sheets. Optional local check: `node dev/run-engine.js` (stubs SpreadsheetApp, runs `generateSchedule()` on sample data).
-- Web import/edge regressions: `node web/adversarial.test.js`.
+- Web import/edge regressions + schedule invariants: `node web/run-tests.js`.
 - Sheets session-edit parity: menu actions on Schedule_Log (move, swap, add student, refresh coverage) via `SessionEditing.gs`.
 - `clasp` (optional) should run from `apps-script/`. Login is interactive, not headless.
 

@@ -718,7 +718,18 @@ function generateNow() {
   state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
   caseloadDirty = false;
   persist();
-  setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
+  let msg = 'Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced';
+  let kind = result.unscheduled.length ? 'bad' : 'ok';
+  if (typeof validateScheduleLog === 'function') {
+    const health = validateScheduleLog(engineInput());
+    if (health.errors && health.errors.length) {
+      msg += ' · schedule integrity: ' + health.errors[0];
+      kind = 'bad';
+    } else if (health.warnings && health.warnings.length) {
+      msg += ' · note: ' + health.warnings[0];
+    }
+  }
+  setStatus(msg, kind);
   scheduleTab = 'week';
   showView('schedule');
 }
@@ -897,6 +908,29 @@ function validateNow() {
   const issues = validateCaseload(state);
   if (!issues.length) setStatus('Looks ready to generate.', 'ok');
   else setStatus(issues.length + ' issue(s): ' + issues[0], 'bad');
+  render();
+}
+
+/** Soft guardrail when editing hours / grade / student time windows in the UI. */
+function guardTimeWindowChange(kind, index, field, value) {
+  const rows = kind === 'availability' ? state.availability
+    : (kind === 'grades' ? state.grades : state.constraints);
+  const row = rows && rows[index];
+  if (!row) return;
+  row[field] = fromTimeInput(value);
+  persistCaseload();
+  if (typeof parseTimeWindow !== 'function') { render(); return; }
+  const win = parseTimeWindow(row.start, row.end);
+  if (!win.ok) {
+    setStatus((kind === 'availability' ? 'Hours' : (kind === 'grades' ? 'Grade block' : 'Student block')) +
+      ': ' + win.error, 'bad');
+  } else if (kind === 'availability' && win.span > (SANITY_WARN_AVAIL_SPAN_MINUTES || 600)) {
+    setStatus('Hours span ' + Math.round(win.span / 60) + ' hours — check AM/PM.', 'bad');
+  } else if (kind !== 'availability' && win.span > (SANITY_WARN_BLACKOUT_SPAN_MINUTES || 240)) {
+    setStatus('Block is ' + Math.round(win.span / 60) + ' hours — check AM/PM.', 'bad');
+  } else {
+    setStatus('Saved.', 'ok');
+  }
   render();
 }
 
@@ -1096,14 +1130,23 @@ function refreshLiveReview(note) {
   state.lastRun.unplaced = under; // surface under-covered as attention metric after edits
   persist();
   let msg = note || 'Schedule updated.';
+  let kind = 'ok';
   if (under || over) {
     msg += ' Coverage: ' + met + '/' + review.length + ' meeting minutes';
     if (under) msg += ' · ' + under + ' under';
     if (over) msg += ' · ' + over + ' over';
-    setStatus(msg, under ? 'bad' : 'ok');
+    kind = under ? 'bad' : 'ok';
   } else {
-    setStatus(msg + ' All students meeting minutes.', 'ok');
+    msg += ' All students meeting minutes.';
   }
+  if (typeof validateScheduleLog === 'function') {
+    const health = validateScheduleLog(engineInput());
+    if (health.errors && health.errors.length) {
+      msg += ' · Integrity: ' + health.errors[0];
+      kind = 'bad';
+    }
+  }
+  setStatus(msg, kind);
 }
 
 function coverageBannerHtml() {
@@ -2021,7 +2064,7 @@ function createSessionPanelHtml() {
       <label>Day<select id="cs-day">${DAYS.map(day =>
         `<option value="${day}" ${d.day===day?'selected':''}>${day}</option>`).join('')}</select></label>
       <label>Start<input id="cs-start" type="time" value="${esc(toTimeInput(d.start))}"></label>
-      <label>Length (min)<input id="cs-duration" type="number" min="5" step="5" value="${esc(d.duration)}"></label>
+      <label>Length (min)<input id="cs-duration" type="number" min="5" max="${(typeof SANITY_MAX_SESSION_MINUTES==='number'?SANITY_MAX_SESSION_MINUTES:120)}" step="5" value="${esc(d.duration)}"></label>
       <label>Week<select id="cs-week">${weeks.map(w =>
         `<option value="${esc(w)}" ${d.week===w?'selected':''}>${esc(w)}</option>`).join('')}</select></label>
       <label class="chk" style="align-self:end"><input id="cs-locked" type="checkbox" ${d.locked?'checked':''}> Lock after create</label>
@@ -2231,11 +2274,11 @@ function openStudentForm(idx) {
     </div>
     <div id="weekly-fields" class="form-grid">
       <div><label>Minutes / week</label><input id="f-min" type="number" min="0" value="${esc(s.minutesPerWeek)}"></div>
-      <div><label>Preferred session length</label><input id="f-pref" type="number" min="0" placeholder="optional" value="${esc(s.preferredSessionLength)}"></div>
+      <div><label>Preferred session length</label><input id="f-pref" type="number" min="0" max="${(typeof SANITY_MAX_SESSION_MINUTES==='number'?SANITY_MAX_SESSION_MINUTES:120)}" step="5" placeholder="optional" value="${esc(s.preferredSessionLength)}"></div>
     </div>
     <div id="quarterly-fields" class="form-grid hidden">
       <div><label>Sessions / quarter</label><input id="f-sq" type="number" min="0" value="${esc(s.sessionsPerQuarter)}"></div>
-      <div><label>Session length</label><input id="f-ql" type="number" min="0" value="${esc(s.quarterlySessionLength)}"></div>
+      <div><label>Session length</label><input id="f-ql" type="number" min="0" max="${(typeof SANITY_MAX_SESSION_MINUTES==='number'?SANITY_MAX_SESSION_MINUTES:120)}" step="5" value="${esc(s.quarterlySessionLength)}"></div>
     </div>
     <div class="form-grid">
       <div><label>Pin to day (optional)</label><select id="f-fd"><option value=""></option>${DAYS.map(d=>'<option>'+d+'</option>').join('')}</select></div>
@@ -2368,8 +2411,8 @@ function blockEditorHtml(studentId) {
     <div class="form-grid">
       <div><label>Reason</label><input value="${esc(c.reason)}" onchange="state.constraints[${i}].reason=this.value;persistCaseload()"></div>
       <div></div>
-      <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(c.start))}" onchange="state.constraints[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
-      <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(c.end))}" onchange="state.constraints[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+      <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(c.start))}" onchange="guardTimeWindowChange('constraints',${i},'start',this.value)"></div>
+      <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(c.end))}" onchange="guardTimeWindowChange('constraints',${i},'end',this.value)"></div>
     </div>
     <label>Days</label>
     <div class="chip-row">${dayChips(c.day, 'constraints', i)}</div>
@@ -2440,8 +2483,8 @@ function renderSetup() {
         ${`<div class="stack">` + (state.availability.map((w, i) => `<div class="card"><div class="form-grid">
           <div><label>Days</label><div class="chip-row">${dayChips(w.day, 'availability', i)}</div></div>
           <div><label>Pattern</label><select onchange="state.availability[${i}].pattern=this.value;persistCaseload()"><option value="" ${!w.pattern?'selected':''}>Every week</option><option ${w.pattern==='A'?'selected':''}>A</option><option ${w.pattern==='B'?'selected':''}>B</option></select></div>
-          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(w.start))}" onchange="state.availability[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
-          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(w.end))}" onchange="state.availability[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(w.start))}" onchange="guardTimeWindowChange('availability',${i},'start',this.value)"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(w.end))}" onchange="guardTimeWindowChange('availability',${i},'end',this.value)"></div>
         </div>
         <div class="field"><label>Notes</label><input value="${esc(w.notes)}" onchange="state.availability[${i}].notes=this.value;persistCaseload()"></div>
         <div class="card-actions">
@@ -2456,8 +2499,8 @@ function renderSetup() {
         ${`<div class="stack">` + (state.grades.map((g, i) => `<div class="card"><div class="form-grid">
           <div><label>Grade</label><input list="grade-list" value="${esc(g.grade)}" onchange="state.grades[${i}].grade=this.value;persistCaseload()"></div>
           <div><label>Reason</label><input value="${esc(g.reason)}" onchange="state.grades[${i}].reason=this.value;persistCaseload()"></div>
-          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(g.start))}" onchange="state.grades[${i}].start=fromTimeInput(this.value);persistCaseload()"></div>
-          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(g.end))}" onchange="state.grades[${i}].end=fromTimeInput(this.value);persistCaseload()"></div>
+          <div><label>Start</label><input type="time" step="300" value="${esc(toTimeInput(g.start))}" onchange="guardTimeWindowChange('grades',${i},'start',this.value)"></div>
+          <div><label>End</label><input type="time" step="300" value="${esc(toTimeInput(g.end))}" onchange="guardTimeWindowChange('grades',${i},'end',this.value)"></div>
         </div><div class="field"><label>Days</label><div class="chip-row">${dayChips(g.day, 'grades', i)}</div></div>
         <div class="card-actions">
           <button onclick="copyWindow('grades',${i})">Duplicate</button>
@@ -2507,22 +2550,25 @@ function renderFiles() {
 
 function renderSettings() {
   const s = state.settings;
-  const num = (key, label) => `<div><label>${label}</label><input type="number" value="${esc(s[key])}" onchange="state.settings.${key}=Number(this.value)||this.value;persist()"></div>`;
+  const sanityMax = (typeof SANITY_MAX_SESSION_MINUTES === 'number') ? SANITY_MAX_SESSION_MINUTES : 120;
+  const num = (key, label, attrs) =>
+    `<div><label>${label}</label><input type="number" value="${esc(s[key])}" ${attrs || ''} onchange="state.settings.${key}=Number(this.value)||this.value;persist();render()"></div>`;
   return `<h1>Settings</h1>
     <p class="lede">Everyday knobs. Placement extras live under Advanced — they apply on the next generate.</p>
     <div class="card form-grid">
-      ${num('minSessionLength','Min session (min)')}
-      ${num('maxSessionLength','Max session (min)')}
-      ${num('weeksPerQuarter','Weeks per quarter')}
+      ${num('minSessionLength','Min session (min)', 'min="5" step="5"')}
+      ${num('maxSessionLength','Max session (min)', 'min="5" max="' + sanityMax + '" step="5"')}
+      ${num('weeksPerQuarter','Weeks per quarter', 'min="1" max="20"')}
+      <p class="meta" style="grid-column:1/-1">Sessions cannot exceed ${sanityMax} minutes (2 hours) — a guardrail against AM/PM mix-ups.</p>
       <div><label>Starting week pattern</label><select onchange="state.settings.startingWeekPattern=this.value;persist()"><option ${s.startingWeekPattern==='A'?'selected':''}>A</option><option ${s.startingWeekPattern==='B'?'selected':''}>B</option></select></div>
       <div><label>Front-load first sessions (weeks 1–2)</label><select onchange="state.settings.frontLoadFirstSessions=this.value==='true';persist()"><option value="true" ${s.frontLoadFirstSessions?'selected':''}>Yes</option><option value="false" ${!s.frontLoadFirstSessions?'selected':''}>No</option></select></div>
       <div><label>Show teacher on outputs</label><select onchange="state.settings.showTeacherInfo=this.value==='true';persist()"><option value="true" ${s.showTeacherInfo?'selected':''}>Yes</option><option value="false" ${!s.showTeacherInfo?'selected':''}>No</option></select></div>
     </div>
     <details class="adv"><summary>Advanced</summary>
       <div class="card form-grid" style="margin-top:10px">
-        ${num('slotIncrement','Slot increment (min)')}
-        ${num('groupRescueExtraMinutes','Group rescue extra minutes')}
-        ${num('maxGroupSize','Max auto-group size')}
+        ${num('slotIncrement','Slot increment (min)', 'min="5" step="5"')}
+        ${num('groupRescueExtraMinutes','Group rescue extra minutes', 'min="0" step="5"')}
+        ${num('maxGroupSize','Max auto-group size', 'min="2" max="12"')}
         <div><label>Prefer consistent weekly pattern</label><select onchange="state.settings.preferConsistentPattern=this.value==='true';persist()"><option value="true" ${s.preferConsistentPattern?'selected':''}>Yes</option><option value="false" ${!s.preferConsistentPattern?'selected':''}>No</option></select></div>
       </div>
     </details>`;
