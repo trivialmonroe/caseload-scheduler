@@ -718,7 +718,18 @@ function generateNow() {
   state.lastRun = { at: new Date().toISOString(), sessionCount: result.sessionCount, unplaced: result.unscheduled.length, rescued: result.rescuedStudentCount, review: result.review };
   caseloadDirty = false;
   persist();
-  setStatus('Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced', result.unscheduled.length ? 'bad' : 'ok');
+  let msg = 'Scheduled ' + result.sessionCount + ' sessions · ' + result.unscheduled.length + ' unplaced';
+  let kind = result.unscheduled.length ? 'bad' : 'ok';
+  if (typeof validateScheduleLog === 'function') {
+    const health = validateScheduleLog(engineInput());
+    if (health.errors && health.errors.length) {
+      msg += ' · schedule integrity: ' + health.errors[0];
+      kind = 'bad';
+    } else if (health.warnings && health.warnings.length) {
+      msg += ' · note: ' + health.warnings[0];
+    }
+  }
+  setStatus(msg, kind);
   scheduleTab = 'week';
   showView('schedule');
 }
@@ -1096,14 +1107,23 @@ function refreshLiveReview(note) {
   state.lastRun.unplaced = under; // surface under-covered as attention metric after edits
   persist();
   let msg = note || 'Schedule updated.';
+  let kind = 'ok';
   if (under || over) {
     msg += ' Coverage: ' + met + '/' + review.length + ' meeting minutes';
     if (under) msg += ' · ' + under + ' under';
     if (over) msg += ' · ' + over + ' over';
-    setStatus(msg, under ? 'bad' : 'ok');
+    kind = under ? 'bad' : 'ok';
   } else {
-    setStatus(msg + ' All students meeting minutes.', 'ok');
+    msg += ' All students meeting minutes.';
   }
+  if (typeof validateScheduleLog === 'function') {
+    const health = validateScheduleLog(engineInput());
+    if (health.errors && health.errors.length) {
+      msg += ' · Integrity: ' + health.errors[0];
+      kind = 'bad';
+    }
+  }
+  setStatus(msg, kind);
 }
 
 function coverageBannerHtml() {

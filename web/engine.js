@@ -1760,6 +1760,134 @@ function validateCaseload(state) {
   return issues;
 }
 
+/**
+ * Structural integrity checks on a live schedule log.
+ * Catches the kinds of "erratic" states users report: broken times, double-books,
+ * orphan rows, and duration mismatches. Returns { ok, errors, warnings }.
+ */
+function weeksOverlapLabels(weekA, weekB) {
+  const a = normalizeWeekLabel(weekA || '');
+  const b = normalizeWeekLabel(weekB || '');
+  if (a === 'Every Week' || b === 'Every Week') return true;
+  return a === b;
+}
+
+function validateScheduleLog(input) {
+  const errors = [];
+  const warnings = [];
+  const log = input && input.scheduleLog ? input.scheduleLog : [];
+  if (!log.length) return { ok: true, errors, warnings };
+
+  const activeIds = {};
+  try {
+    loadStudents(input.students || []).forEach(s => { activeIds[String(s.id)] = true; });
+  } catch (e) { /* ignore — caseload may be empty during partial imports */ }
+
+  const parsed = [];
+  log.forEach((r, idx) => {
+    const label = 'Row ' + (idx + 1) + (r.name ? ' (' + r.name + ')' : '');
+    const day = normalizeScheduleDay(r.day);
+    if (!day || DAYS.indexOf(day) < 0) {
+      errors.push(label + ': invalid day "' + (r.day || '') + '".');
+      return;
+    }
+    let start, end;
+    try {
+      start = timeStrToMinutes(r.start);
+      end = timeStrToMinutes(r.end);
+    } catch (e) {
+      errors.push(label + ': bad start/end time.');
+      return;
+    }
+    if (!(end > start)) {
+      errors.push(label + ': end must be after start.');
+      return;
+    }
+    const dur = Number(r.duration);
+    if (Number.isFinite(dur) && dur > 0 && Math.abs(dur - (end - start)) > 0) {
+      errors.push(label + ': duration (' + dur + ') does not match ' + (end - start) + ' min span.');
+    }
+    const week = normalizeWeekLabel(r.week || '');
+    if (!week) warnings.push(label + ': blank week (expected Every Week or Week N).');
+    const sid = String(r.studentId || '').trim();
+    if (!sid) errors.push(label + ': missing student ID.');
+    else if (Object.keys(activeIds).length && !activeIds[sid]) {
+      warnings.push(label + ': student ID "' + sid + '" is not an active caseload student.');
+    }
+    parsed.push({
+      idx: idx,
+      label: label,
+      studentId: sid,
+      day: day,
+      start: start,
+      end: end,
+      week: week || 'Every Week',
+      locked: String(r.locked || '').toLowerCase() === 'yes',
+      groupId: String(r.groupId || '').trim()
+    });
+  });
+
+  for (let i = 0; i < parsed.length; i++) {
+    for (let j = i + 1; j < parsed.length; j++) {
+      const a = parsed[i], b = parsed[j];
+      if (a.day !== b.day) continue;
+      if (!weeksOverlapLabels(a.week, b.week)) continue;
+      if (!overlaps(a.start, a.end, b.start, b.end)) continue;
+      const sameSlot = a.start === b.start && a.end === b.end;
+      if (a.studentId && a.studentId === b.studentId) {
+        errors.push(a.label + ' overlaps the same student in ' + b.label +
+          ' (' + a.day + ' ' + minutesToTimeStr(a.start) + '–' + minutesToTimeStr(a.end) + ').');
+      } else if (!sameSlot) {
+        errors.push(a.label + ' overlaps a different session at a different time (' + b.label +
+          ') — provider double-book.');
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors: errors, warnings: warnings };
+}
+
+/**
+ * After regenerate, every previously locked student/day/start/end must still appear.
+ * Returns missing lock descriptions (empty = ok).
+ */
+function missingPreservedLocks(beforeLog, afterLog) {
+  const missing = [];
+  const afterKeys = {};
+  (afterLog || []).forEach(r => {
+    if (String(r.locked || '').toLowerCase() !== 'yes') return;
+    try {
+      const key = [
+        String(r.studentId).trim(),
+        normalizeScheduleDay(r.day),
+        timeStrToMinutes(r.start),
+        timeStrToMinutes(r.end),
+        normalizeWeekLabel(r.week || '')
+      ].join('|');
+      afterKeys[key] = true;
+    } catch (e) {}
+  });
+  (beforeLog || []).forEach(r => {
+    if (String(r.locked || '').toLowerCase() !== 'yes') return;
+    try {
+      const key = [
+        String(r.studentId).trim(),
+        normalizeScheduleDay(r.day),
+        timeStrToMinutes(r.start),
+        timeStrToMinutes(r.end),
+        normalizeWeekLabel(r.week || '')
+      ].join('|');
+      if (!afterKeys[key]) {
+        missing.push((r.name || r.studentId) + ' @ ' + r.day + ' ' + r.start + '–' + r.end +
+          ' (' + (normalizeWeekLabel(r.week || '') || 'Every Week') + ')');
+      }
+    } catch (e) {
+      missing.push((r.name || r.studentId) + ' (unreadable locked row)');
+    }
+  });
+  return missing;
+}
+
 // ── CSV / JSON workspace ────────────────────────────────────────────────────
 const CSV_SCHEMAS = {
   students: ['id','firstName','lastName','grade','serviceType','groupId','noGroup','frequencyType','minutesPerWeek','preferredSessionLength','sessionsPerQuarter','quarterlySessionLength','notes','status','teacher','fixedDay','fixedStart'],
@@ -2075,6 +2203,7 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     DAYS, DEFAULT_SETTINGS, buildSettings, runSchedulingEngine, validateCaseload,
+    validateScheduleLog, missingPreservedLocks, weeksOverlapLabels,
     computeOpenSlots, findAlternativeSlots, findSwapCandidates, pickDiverseCandidates, buildCalendarModel,
     parseCsv, toCsv, csvToObjects, objectsToCsv, detectCsvKind, normalizeImportedStudent,
     normalizeHeaderKey, csvRowGet, sheetNameToKind, importTableRows, applyWorkbookImports,
