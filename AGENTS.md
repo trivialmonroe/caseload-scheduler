@@ -26,6 +26,7 @@ This repo ships **two products** that share a scheduling algorithm:
 - Algorithm lives in `web/engine.js`. If you change placement rules, also update `apps-script/SchedulingEngine.gs` and `apps-script/DataHelpers.gs`.
 - **Tests (no install):** from repo root run `node web/run-tests.js` (runs adversarial + schedule-invariant suites). Individual files: `node web/adversarial.test.js`, `node web/invariants.test.js`.
 - `validateScheduleLog(input)` in `web/engine.js` checks live schedule integrity (bad times, student/provider overlaps, duration mismatches). The web UI surfaces the first integrity error after generate and after calendar edits. Prefer adding regression cases to `web/invariants.test.js` when fixing erratic user reports.
+- Sanity guardrails: sessions hard-capped at **120 minutes**; `validateCaseload` flags inverted time windows (end ≤ start), availability spans over **10 hours**, and grade/student blocks over **4 hours** (common AM/PM mistakes). Hours/grades/student-block editors show the same warnings on change.
 
 ### Google Apps Script version
 

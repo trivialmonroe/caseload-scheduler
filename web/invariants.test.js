@@ -56,6 +56,75 @@ function sampleCaseload() {
   };
 }
 
+console.log('\n=== Time window / sanity guardrails ===');
+
+assert('parseTimeWindow rejects end before start', !eng.parseTimeWindow('9:00 AM', '8:00 AM').ok);
+assert('parseTimeWindow rejects end == start', !eng.parseTimeWindow('9:00 AM', '9:00 AM').ok);
+assert('parseTimeWindow accepts normal window', eng.parseTimeWindow('8:00 AM', '3:00 PM').ok &&
+  eng.parseTimeWindow('8:00 AM', '3:00 PM').span === 7 * 60);
+assert('buildSettings caps maxSessionLength at 2 hours',
+  eng.buildSettings({ maxSessionLength: 400 }).maxSessionLength === eng.SANITY_MAX_SESSION_MINUTES);
+
+const amPmAvail = eng.validateCaseload({
+  settings: eng.buildSettings({}),
+  students: [{ id: 'a', firstName: 'A', lastName: 'A', grade: '1', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }],
+  availability: [{ day: 'Mon', start: '8:00 AM', end: '8:00 PM', pattern: '' }],
+  grades: [],
+  constraints: []
+});
+assert('Very long availability window is flagged',
+  amPmAvail.some(m => /hours/i.test(m) && /AM\/PM/i.test(m)),
+  JSON.stringify(amPmAvail));
+
+const badEnd = eng.validateCaseload({
+  settings: eng.buildSettings({}),
+  students: [{ id: 'a', firstName: 'A', lastName: 'A', grade: '1', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }],
+  availability: [{ day: 'Mon', start: '2:00 PM', end: '9:00 AM', pattern: '' }],
+  grades: [],
+  constraints: []
+});
+assert('Availability end-before-start is flagged',
+  badEnd.some(m => /End must be after start/i.test(m)),
+  JSON.stringify(badEnd));
+
+const longBlackout = eng.validateCaseload({
+  settings: eng.buildSettings({}),
+  students: [{ id: 'a', firstName: 'A', lastName: 'A', grade: '2', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }],
+  availability: [{ day: 'Mon', start: '8:00 AM', end: '3:00 PM', pattern: '' }],
+  grades: [{ grade: '2', day: 'Mon', start: '8:00 AM', end: '2:00 PM', reason: 'Oops' }],
+  constraints: []
+});
+assert('Long grade blackout is flagged',
+  longBlackout.some(m => /Grade block/i.test(m) && /hours/i.test(m)),
+  JSON.stringify(longBlackout));
+
+const hugePref = eng.validateCaseload({
+  settings: eng.buildSettings({}),
+  students: [{ id: 'a', firstName: 'A', lastName: 'A', grade: '1', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, preferredSessionLength: 180, status: 'Active' }],
+  availability: [{ day: 'Mon', start: '8:00 AM', end: '3:00 PM', pattern: '' }],
+  grades: [],
+  constraints: []
+});
+assert('Preferred session > 2 hours is flagged',
+  hugePref.some(m => /preferred session length/i.test(m)),
+  JSON.stringify(hugePref));
+
+const giantSession = eng.validateScheduleLog({
+  students: [{ id: 'a', firstName: 'A', lastName: 'A', grade: '1', serviceType: 'Individual',
+    frequencyType: 'Weekly', minutesPerWeek: 30, status: 'Active' }],
+  scheduleLog: [{
+    studentId: 'a', name: 'A A', week: 'Every Week', day: 'Mon',
+    start: '8:00 AM', end: '11:00 AM', duration: 180, locked: ''
+  }]
+});
+assert('Schedule session over 2 hours is an error',
+  !giantSession.ok && giantSession.errors.some(e => /sanity limit/i.test(e)),
+  JSON.stringify(giantSession.errors));
+
 console.log('\n=== validateScheduleLog basics ===');
 
 assert(
